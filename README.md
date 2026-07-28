@@ -74,17 +74,23 @@ Step 6 — Deploy to BTP CF
 # 1. Navigate to the tool folder
 cd "migration-tool"
 
-# 2. Create a virtual environment (one-time)
-python -m venv .venv
-
-# 3. Activate it
-.venv\Scripts\Activate.ps1
-# If PowerShell blocks activation:
-#   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# 4. Install dependencies (one-time)
+# 2. Install dependencies
 pip install -r requirements.txt
 ```
+
+That is all that is required. The tool can then be run directly with `python migrate.py`.
+
+### Optional: virtual environment
+
+If you want to keep the tool's dependencies isolated from your global Python installation:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+> If PowerShell blocks activation: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 
 ---
 
@@ -302,19 +308,7 @@ If you have SAP NWDS ABAP Dictionary table definitions exported as a ZIP:
 
 ## Troubleshooting FAQs
 
-### Q1: Virtual environment activation is blocked on Windows
-
-**Symptom:** `cannot be loaded because running scripts is disabled on this system`
-
-**Fix:**
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-Then re-run `.venv\Scripts\Activate.ps1`.
-
----
-
-### Q2: Base package detected too deeply
+### Q1: Base package detected too deeply
 
 **Symptom:** Tool suggests `com.example.myapp.controller` instead of `com.example.myapp`.
 
