@@ -1,0 +1,15 @@
+# ── DataSource — HANA Cloud via VCAP_SERVICES ─────────────────────────────────
+# Spring Boot automatically maps VCAP_SERVICES to vcap.services.* properties
+# when running on Cloud Foundry. No extra library needed.
+#
+# The service name below must match the BTP service instance bound to this app.
+# Verify the exact name and credential fields with:  cf env {{ artifact_id }}-app
+spring.datasource.url=jdbc:sap://${vcap.services.{{ hdi_service_name }}.credentials.host}:${vcap.services.{{ hdi_service_name }}.credentials.port}?encrypt=true&validateCertificate=false&currentschema=${vcap.services.{{ hdi_service_name }}.credentials.schema}
+spring.datasource.username=${vcap.services.{{ hdi_service_name }}.credentials.user}
+spring.datasource.password=${vcap.services.{{ hdi_service_name }}.credentials.password}
+spring.datasource.driver-class-name=com.sap.db.jdbc.Driver
+
+# ── JPA ───────────────────────────────────────────────────────────────────────
+# HDI owns the schema — never let Hibernate auto-create/drop tables.
+spring.jpa.hibernate.ddl-auto=none
+spring.jpa.show-sql=false

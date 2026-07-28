@@ -1,0 +1,13 @@
+---
+applications:
+  - name: {{ artifact_id }}
+    memory: 1G
+    instances: 1
+    buildpacks:
+      - sap_java_buildpack_jakarta
+    path: target/{{ artifact_id }}-1.0.0-SNAPSHOT.jar
+    services:
+      - {{ hdi_service_name }}
+    env:
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: {{ java_version }}.+ } }'
+      SPRING_PROFILES_ACTIVE: cloud

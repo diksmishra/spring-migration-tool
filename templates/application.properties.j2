@@ -1,0 +1,41 @@
+spring.application.name={{ artifact_id }}
+server.port=8080
+
+# ── DataSource ────────────────────────────────────────────────────────────────
+{% if has_hana_cloud %}
+# Cloud profile (SPRING_PROFILES_ACTIVE=cloud): see application-cloud.properties
+#   → datasource URL + credentials are read from VCAP_SERVICES via vcap.services.*
+# Local profile (SPRING_PROFILES_ACTIVE=local): see application-local.properties
+#   → fill in your personal HANA Cloud dev credentials
+{% else %}
+# TODO: Update with your actual database host, port, and credentials
+{% if has_jpa or has_jdbc %}
+spring.datasource.url=jdbc:db2://localhost:50000/REPLACE_WITH_DB_NAME
+spring.datasource.username=REPLACE_WITH_USERNAME
+spring.datasource.password=REPLACE_WITH_PASSWORD
+spring.datasource.driver-class-name=com.ibm.db2.jcc.DB2Driver
+{% endif %}
+
+{% if has_jpa %}
+# ── JPA ───────────────────────────────────────────────────────────────────────
+spring.jpa.database-platform=org.hibernate.dialect.DB2Dialect
+spring.jpa.hibernate.ddl-auto=none
+spring.jpa.show-sql=false
+{% endif %}
+{% endif %}
+
+# ── Actuator ─────────────────────────────────────────────────────────────────
+management.endpoints.web.exposure.include=health,info,env,mappings
+management.endpoint.health.show-details=always
+management.info.env.enabled=true
+info.app.name={{ artifact_id }}
+info.app.version=@project.version@
+info.app.java-version=@java.version@
+
+# ── File Upload ───────────────────────────────────────────────────────────────
+spring.servlet.multipart.max-file-size=50MB
+spring.servlet.multipart.max-request-size=50MB
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.level.root=INFO
+# logging.level.{{ base_package }}=DEBUG
