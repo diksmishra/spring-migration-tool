@@ -3,6 +3,7 @@
 SAP NetWeaver -> Spring Boot Migration Tool
 Usage: python migrate.py SOURCE_DIR [--output OUTPUT_DIR] [--non-interactive]
 """
+import re
 from pathlib import Path
 import click
 from rich.console import Console
@@ -16,6 +17,7 @@ from migration_tool.analyzer.scanner import ProjectScanner
 from migration_tool.transformers.logging_transformer import LoggingTransformer
 from migration_tool.transformers.import_transformer import ImportTransformer
 from migration_tool.transformers.persistence_transformer import PersistenceTransformer
+from migration_tool.transformers.utils_transformer import UtilsTransformer
 from migration_tool.generators.pom_generator import PomGenerator
 from migration_tool.generators.app_class_generator import AppClassGenerator
 from migration_tool.generators.properties_generator import PropertiesGenerator
@@ -61,12 +63,21 @@ def main(source_dir, output, group_id, artifact_id, persistence,
     tbl = Table(show_header=False, box=None, padding=(0, 2))
     tbl.add_column(style='green')
     tbl.add_column(style='bold white')
-    tbl.add_row('Controllers',   str(scan_result['counts']['controllers']))
-    tbl.add_row('Services',      str(scan_result['counts']['services']))
-    tbl.add_row('Models',        str(scan_result['counts']['models']))
-    tbl.add_row('DAOs/Repos',    str(scan_result['counts']['daos']))
-    tbl.add_row('Other classes', str(scan_result['counts']['other']))
+    tbl.add_row('Controllers',        str(scan_result['counts']['controllers']))
+    tbl.add_row('Services',           str(scan_result['counts']['services']))
+    tbl.add_row('Models/DTOs',        str(scan_result['counts']['models']))
+    tbl.add_row('DAOs/Repos',         str(scan_result['counts']['daos']))
+    tbl.add_row('Enums (co/)',        str(scan_result['counts']['enums']))
+    tbl.add_row('Utils',              str(scan_result['counts']['utils']))
+    tbl.add_row('Tests',              str(scan_result['counts']['tests']))
+    tbl.add_row('Other classes',      str(scan_result['counts']['other']))
+    if scan_result['counts']['skipped_scaffold']:
+        tbl.add_row('[yellow]Skipped (scaffold)[/yellow]',
+                    str(scan_result['counts']['skipped_scaffold']))
     tbl.add_row('SAP logging found in', f"{scan_result['counts']['sap_logging_files']} files")
+    if scan_result['counts']['sap_engine_files']:
+        tbl.add_row('[yellow]SAP platform API in[/yellow]',
+                    f"{scan_result['counts']['sap_engine_files']} files (manual rewrite needed)")
     if scan_result['counts']['javax_persistence_files']:
         tbl.add_row(
             'javax.persistence found in',
@@ -158,11 +169,16 @@ def main(source_dir, output, group_id, artifact_id, persistence,
     # ── Transform source files ────────────────────────────────────────────────
     output_path.mkdir(parents=True, exist_ok=True)
 
-    all_files    = scan_result['all_java_files']
+    # Exclude scaffold files (wrong base package — not legacy code)
+    skipped_packages = scan_result['classified'].get('skipped', [])
+    skipped_set      = set(skipped_packages)
+    all_files        = [f for f in scan_result['all_java_files'] if f not in skipped_set]
+
     transformers = [
         LoggingTransformer(config),
         ImportTransformer(config),
         PersistenceTransformer(config),
+        UtilsTransformer(config),
     ]
     reporter = Reporter(config)
 
@@ -180,14 +196,31 @@ def main(source_dir, output, group_id, artifact_id, persistence,
 
         for java_file in all_files:
             rel_path = java_file.relative_to(source_path)
-            if 'src/main/java' in str(rel_path).replace('\\', '/'):
-                out_file = output_path / rel_path
-            else:
-                out_file = output_path / 'src' / 'main' / 'java' / rel_path
-            out_file.parent.mkdir(parents=True, exist_ok=True)
 
             with open(java_file, 'r', encoding='utf-8', errors='replace') as f:
                 source = f.read()
+
+            # Use the package declaration to place the file in the correct directory.
+            # Flat legacy projects (no src/main/java tree) need this to land in the
+            # right package subdirectory rather than directly under src/main/java/.
+            pkg_match = re.search(r'^\s*package\s+([\w.]+)\s*;', source, re.MULTILINE)
+
+            # Test files go to src/test/java; everything else to src/main/java
+            path_str = str(java_file).replace('\\', '/')
+            is_test  = (
+                '/test/' in path_str
+                or java_file.name.endswith(('Test.java', 'Tests.java', 'IT.java'))
+            )
+            java_root = Path('src') / ('test' if is_test else 'main') / 'java'
+
+            if pkg_match:
+                pkg_path = Path(*pkg_match.group(1).split('.'))
+                out_file = output_path / java_root / pkg_path / java_file.name
+            elif str(java_root) in str(rel_path).replace('\\', '/'):
+                out_file = output_path / rel_path
+            else:
+                out_file = output_path / java_root / rel_path
+            out_file.parent.mkdir(parents=True, exist_ok=True)
 
             result     = source
             file_todos = []
@@ -198,7 +231,7 @@ def main(source_dir, output, group_id, artifact_id, persistence,
             with open(out_file, 'w', encoding='utf-8') as f:
                 f.write(result)
 
-            reporter.record_file(java_file, rel_path, file_todos)
+            reporter.record_file(java_file, out_file.relative_to(output_path), file_todos)
             progress.advance(task)
 
     # ── Generate scaffold files ───────────────────────────────────────────────
@@ -240,13 +273,23 @@ def _copy_resources(source_path: Path, output_path: Path):
     skip_dirs     = {'target', '.git', 'node_modules', '__pycache__'}
 
     for src_file in source_path.rglob('*'):
-        if src_file.is_file() and src_file.suffix in resource_exts:
-            if any(part in skip_dirs for part in src_file.parts):
-                continue
-            rel  = src_file.relative_to(source_path)
-            dest = output_path / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_file, dest)
+        if not (src_file.is_file() and src_file.suffix in resource_exts):
+            continue
+        if any(part in skip_dirs for part in src_file.parts):
+            continue
+
+        rel = src_file.relative_to(source_path)
+        rel_str = str(rel).replace('\\', '/')
+
+        # Skip resources from the nascent Spring Boot scaffold (main/ without src/ prefix).
+        # These are not legacy resources — they belong to a pre-existing Spring Boot stub
+        # and would overwrite the correctly generated application.properties.
+        if rel_str.startswith('main/') or rel_str.startswith('test/'):
+            continue
+
+        dest = output_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_file, dest)
 
 
 if __name__ == '__main__':

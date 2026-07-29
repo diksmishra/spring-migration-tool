@@ -41,17 +41,19 @@ Step 6 — Deploy to BTP CF
 
 ## What it does
 
-1. **Scans** your legacy project and classifies all Java files (controllers, services, DAOs, models).
-2. **Detects** SAP-specific patterns: `com.sap.tc.logging`, `javax.persistence`, JNDI lookups, SAP JCo, SAP UME Security.
+1. **Scans** your legacy project and classifies all Java files — controllers, services, DAOs, models, enums (`co/`), utils, test files, and EJB-style implementations. Files whose package indicates an existing Spring Boot scaffold (not legacy code) are identified and skipped.
+2. **Detects** SAP-specific patterns: `com.sap.tc.logging`, `javax.persistence`, JNDI lookups, SAP JCo, SAP UME Security, SAP NetWeaver platform APIs (`com.sap.engine.*`). Also detects removed/deprecated Java 9–17 APIs (JAXB, `sun.*`, `SecurityManager`, deprecated `Thread` methods, boxed constructors, `finalize()`).
 3. **Transforms** every `.java` file:
    - Replaces `SimpleLogger` / `Location` with SLF4J (`Logger` / `LoggerFactory`)
    - Rewrites `javax.*` → `jakarta.*` (required for Spring Boot 3.x / Jakarta EE 9+)
    - Converts EJB annotations: `@Stateless` / `@Stateful` → `@Service`, `@EJB` → `@Autowired`
    - Removes OpenJPA-specific imports
-4. **Generates** Spring Boot scaffold files (`pom.xml`, main class, properties, `manifest.yml`, `mta.yaml`).
-5. **Generates** HANA Cloud HDI artifacts (`*.hdbtable`, `.hdiconfig`, `.hdinamespace`) from `.dtdbtable` ZIP exports.
-6. **Copies** non-Java resources (XML, properties, YAML, JSON) into the output tree.
-7. **Writes** `migration-report.md` listing every manual-action item.
+   - **Comments out** SAP imports that have no classpath equivalent on BTP CF (`com.sap.security.*`, `com.sap.engine.*`, `com.sap.conn.jco.*`) — leaving them as `import` statements causes compile failures; each commented-out line gets a `// TODO MANUAL` marker and a 1:1 entry in `migration-report.md`
+4. **Places output files** using each file's own `package` declaration, so flat legacy projects (no `src/main/java/` tree) land in the correct nested directory. Test files (path contains `/test/` or name ends in `Test.java` / `Tests.java` / `IT.java`) are routed to `src/test/java/`.
+5. **Generates** Spring Boot scaffold files (`pom.xml` with Lombok, main class, properties, `manifest.yml`, `mta.yaml`, root `package.json`).
+6. **Generates** HANA Cloud HDI artifacts (`*.hdbtable`, `.hdiconfig`, `.hdinamespace`) from `.dtdbtable` ZIP exports.
+7. **Copies** non-Java resources (XML, properties, YAML, JSON) into the output tree, skipping any resources that belong to a pre-existing Spring Boot scaffold.
+8. **Writes** `migration-report.md` with one entry per `// TODO MANUAL` comment inserted into source, output-relative file paths, and a summary section for each pattern family (SAP security, SAP platform API, JNDI, JCo).
 
 ---
 
@@ -262,25 +264,36 @@ If you have SAP NWDS ABAP Dictionary table definitions exported as a ZIP:
 
 ```
 <artifact-id>-springboot/
-├── pom.xml                               Java 17, Spring Boot 3.x, ngdbc, Actuator
+├── pom.xml                               Java 17, Spring Boot 3.x, ngdbc, Lombok, Actuator
+├── package.json                          Root deploy script: mvn clean package → mbt build → cf deploy
 ├── manifest.yml                          Standalone CF push (single module)
 ├── mta.yaml                              MTA deploy (HDI deployer + Java app)
-├── migration-report.md                   What was converted + manual TODOs
+├── migration-report.md                   What was converted + every manual TODO item
 ├── db/                                   (hana-cloud only)
 │   ├── src/
 │   │   ├── .hdiconfig                    HDI plugin declarations — MUST be in src/
 │   │   ├── .hdinamespace                 Empty namespace
 │   │   └── *.hdbtable                    One file per table
 │   └── package.json                      @sap/hdi-deploy entry point
-└── src/main/
-    ├── java/…/
-    │   ├── *Application.java             @SpringBootApplication main class
-    │   └── (transformed source files)
-    └── resources/
-        ├── application.properties        Common settings + Actuator config
-        ├── application-cloud.properties  BTP CF datasource (vcap.services.*)
-        └── application-local.properties  Local dev datasource template
+└── src/
+    ├── main/
+    │   ├── java/<package>/
+    │   │   ├── *Application.java         @SpringBootApplication main class
+    │   │   ├── controller/               Transformed controllers
+    │   │   ├── service/                  Transformed service interfaces + impls
+    │   │   ├── dao/                      Transformed DAO interfaces + impls
+    │   │   ├── model/                    Transformed entity/DTO classes
+    │   │   ├── co/                       Enums — copied as-is
+    │   │   └── utils/                    Utilities — copied with API-upgrade flags
+    │   └── resources/
+    │       ├── application.properties        Common settings + Actuator config
+    │       ├── application-cloud.properties  BTP CF datasource (vcap.services.*)
+    │       └── application-local.properties  Local dev datasource template
+    └── test/
+        └── java/<package>/               Test files routed here (if any detected)
 ```
+
+> **Note:** Output file placement is driven by each file's own `package` declaration, not the source directory structure. Legacy projects stored in flat dot-named folders (`dao.impl/`, `service.impl/`, `dao.model.screen/`) are placed correctly without any pre-processing.
 
 ---
 
@@ -298,11 +311,30 @@ If you have SAP NWDS ABAP Dictionary table definitions exported as a ZIP:
 ## Limitations
 
 - **No semantic analysis.** Transformations are regex-based. Unusual formatting of SAP logging calls may not be detected.
-- **No SAP JCo replacement.** Files using `com.sap.conn.jco` are flagged but not transformed. RFC/BAPI calls require manual rewriting.
-- **No SAP UME Security replacement.** Files using `com.sap.security.*` are flagged; Spring Security setup is manual.
-- **No DB schema.** Model/entity classes are transformed (javax→jakarta) but field definitions are not generated — you need the DB schema or `.dtdbtable` files.
-- **JNDI DataSource.** The tool flags `InitialContext` / `context.lookup` usages but does not replace them — Spring Boot datasource injection must be wired manually.
-- **javalang parse errors.** The tool falls back to regex if javalang cannot parse a file. Structural analysis may be less accurate for complex files.
+- **SAP UME Security (`com.sap.security.*`).** Import statements are commented out with `// TODO MANUAL` to prevent compile failures. Spring Security wiring (`UserDetailsService`, `SecurityFilterChain`) must be implemented manually.
+- **SAP NetWeaver platform API (`com.sap.engine.*`).** Import statements are commented out. Replace with `@ConfigurationProperties` / `@Value` for configuration, and `@Component` / `@Bean` for singletons.
+- **SAP JCo (`com.sap.conn.jco.*`).** Import statements are commented out. RFC/BAPI calls require manual rewriting — either use the SAP JCo standalone jar (if licensed) or expose SAP via REST.
+- **Java 9–17 deprecated APIs.** The tool _detects_ JAXB, `sun.*`, `SecurityManager`, boxed constructors, `finalize()`, and deprecated `Thread` methods, and records them in the migration report, but does **not** modify the source. Each item must be fixed manually.
+- **No DB schema generation from Java.** Model/entity classes are transformed (javax→jakarta) but field definitions are not synthesised from source — you need the DB schema or `.dtdbtable` files.
+- **JNDI DataSource.** `InitialContext` / `context.lookup` usages are flagged but not replaced. Wire Spring Boot datasource injection (`@Autowired DataSource`) manually.
+- **No method-body rewriting.** Conditional logic, service calls, and DAO query strings are copied verbatim. Complex business logic will still compile, but runtime behaviour must be verified.
+
+---
+
+## Migration report
+
+Every run produces `migration-report.md` in the output folder. It contains:
+
+| Section | What it covers |
+|---|---|
+| **What was automatically converted** | Table of all automated transformations applied (logging, jakarta, EJB, enums, HDI, etc.) |
+| **Manual action required** | One sub-heading per file, one bullet per `// TODO MANUAL` comment — paths are output-relative (e.g. `src\main\java\com\example\service\impl\FooServiceImpl.java`) |
+| **Known patterns requiring follow-up** | Summary table per pattern family (SAP UME security, SAP platform API, JNDI, JCo) — shows every affected file for that family in one place |
+| **Skipped files** | Files excluded because their package indicates a pre-existing Spring Boot scaffold, not legacy code |
+| **Test files** | JUnit 4 → 5 checklist if any test files were detected |
+| **Next steps** | Ordered checklist from `mvn compile` through to BTP CF deploy |
+
+The report has a **1:1 relationship** between `// TODO MANUAL` comments in source and bullet points in the "Manual action required" section. Every commented-out SAP import line produces its own bullet — not a single bullet per file.
 
 ---
 
@@ -426,3 +458,73 @@ cf deploy -i <deployment-id> -a retry
 ```
 
 Get the deployment ID from the `cf deploy` output, or run `cf mta-ops`.
+
+---
+
+### Q10: `mvn compile` still fails with `cannot find symbol` on SAP classes
+
+**Symptom:** Even after migration, `mvn compile` reports errors like:
+```
+error: cannot find symbol
+  symbol:   class IUser
+  location: class ...ServiceImpl
+```
+
+**Cause:** The SAP class is referenced in method signatures, field declarations, or method bodies — not just in the `import` statement. The tool only comments out `import` lines; usages in code remain.
+
+**Fix:** Search for all uses of the missing class name in the file and either remove them or replace them with the Spring equivalent. For `com.sap.security.api.IUser`, a common replacement is to inject `java.security.Principal` via a method parameter annotated with `@AuthenticationPrincipal`.
+
+---
+
+### Q11: What do `// TODO MANUAL` comments mean?
+
+Every line the tool comments out — because it references a SAP or otherwise unavailable library — is prefixed with:
+
+```java
+// TODO MANUAL — <reason>
+// import com.sap.security.api.IUser;
+```
+
+Each such line also has a corresponding bullet in `migration-report.md` under that file's heading. The goal is a 1:1 relationship: every commented-out import in source has exactly one entry in the report, so the report is a complete work list.
+
+Search for `TODO MANUAL` in the generated project to find all items at once:
+```powershell
+# PowerShell
+Get-ChildItem -Recurse -Filter *.java | Select-String "TODO MANUAL"
+```
+
+---
+
+### Q12: Some files from the source were not included in the output
+
+**Symptom:** A few `.java` files from the legacy source are missing from the output.
+
+**Cause:** The tool skips files whose `package` declaration does not belong to the legacy codebase — typically files that were already part of a nascent Spring Boot scaffold committed alongside the legacy source. These are listed in the "Skipped files" section of `migration-report.md`.
+
+**What to do:** Review the skipped list. If a file was incorrectly identified as scaffold (e.g., a utility class whose package happens to contain a scaffold-like fragment), copy it manually from the source and adjust its package declaration.
+
+---
+
+### Q13: Migration report shows Java 9–17 deprecation warnings
+
+**Symptom:** `migration-report.md` contains items like:
+
+```
+MANUAL — Java version upgrade: Boxed-type constructors (new Integer(), ...) are deprecated for removal since Java 9.
+```
+
+**Cause:** The source uses APIs that were deprecated or removed between Java 8 and Java 17. The tool detects these patterns but does not rewrite them.
+
+**Common fixes:**
+
+| Deprecated pattern | Replacement |
+|---|---|
+| `new Integer(x)` | `Integer.valueOf(x)` |
+| `new Long(x)` | `Long.valueOf(x)` |
+| `import javax.xml.bind.*` | Add `jakarta.xml.bind:jakarta.xml.bind-api:4.0.0` to `pom.xml` |
+| `import sun.misc.*` | Use `java.util.Base64` etc. (standard replacements) |
+| `Thread.stop()` | `Thread.interrupt()` + check `isInterrupted()` |
+| `System.setSecurityManager(...)` | Remove — handled by Spring Security |
+| `protected void finalize()` | `AutoCloseable` + try-with-resources |
+
+These are compile warnings in Java 17 and compile errors in Java 21+. Fix them before upgrading the Java version target in `pom.xml`.

@@ -10,13 +10,21 @@ SAP_IMPORTS_REMOVE = [
     re.compile(r'^import\s+com\.sap\.tc\.logging\.[^;]+;\s*\n', re.MULTILINE),
 ]
 
-SAP_IMPORTS_FLAG = {
-    re.compile(r'^import\s+com\.sap\.security\.[^;]+;', re.MULTILINE):
+# SAP imports that must be removed — they reference libraries that do not exist
+# on BTP CF / Spring Boot. Keeping them causes compile failures.
+# We comment them out with a TODO marker so the developer can see what was there.
+SAP_IMPORTS_REMOVE_WITH_TODO = {
+    re.compile(r'^(import\s+com\.sap\.security\.[^;]+;)\s*$', re.MULTILINE):
         'SAP UME security — replace with Spring Security',
-    re.compile(r'^import\s+com\.sap\.conn\.jco\.[^;]+;', re.MULTILINE):
+    re.compile(r'^(import\s+com\.sap\.conn\.jco\.[^;]+;)\s*$', re.MULTILINE):
         'SAP JCo (Java Connector) — requires library replacement',
-    re.compile(r'^import\s+com\.sap\.mw\.jco\.[^;]+;', re.MULTILINE):
+    re.compile(r'^(import\s+com\.sap\.mw\.jco\.[^;]+;)\s*$', re.MULTILINE):
         'SAP JCo (Java Connector) — requires library replacement',
+    re.compile(r'^(import\s+com\.sap\.engine\.[^;]+;)\s*$', re.MULTILINE):
+        'SAP NetWeaver platform API — replace with Spring Boot equivalent',
+}
+
+SAP_IMPORTS_FLAG = {
     re.compile(r'^import\s+javax\.naming\.[^;]+;', re.MULTILINE):
         'JNDI usage — replace with Spring DataSource injection',
     re.compile(r'^import\s+javax\.ejb\.[^;]+;', re.MULTILINE):
@@ -42,11 +50,24 @@ class ImportTransformer:
     def transform(self, source: str, file_path: Path, scan_result: dict) -> Tuple[str, List[str]]:
         todos = []
 
-        # Remove known-bad SAP imports
+        # Remove known-bad SAP imports (logging — already handled by LoggingTransformer)
         for pattern in SAP_IMPORTS_REMOVE:
             source = pattern.sub('', source)
 
-        # Flag SAP imports that need manual work
+        # Comment out SAP imports that have no Spring Boot equivalent.
+        # Keeping them causes compile failures; commenting preserves traceability.
+        # One todos entry is added per matched import line so the report has 1:1
+        # coverage with every // TODO MANUAL comment inserted into source.
+        for pattern, message in SAP_IMPORTS_REMOVE_WITH_TODO.items():
+            matches = pattern.findall(source)  # captured group = the import line
+            if matches:
+                def _comment_out(m, msg=message):
+                    return f'// TODO MANUAL — {msg}\n// {m.group(1)}'
+                source = pattern.sub(_comment_out, source)
+                for import_line in matches:
+                    todos.append(f'MANUAL: {message} — `{import_line.strip()}`')
+
+        # Flag (but keep) SAP imports that need manual work but may compile
         for pattern, message in SAP_IMPORTS_FLAG.items():
             if pattern.search(source):
                 todos.append(f'MANUAL: {message}')

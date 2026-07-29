@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
@@ -37,3 +38,16 @@ class ManifestGenerator:
             has_db_module=has_db,
         )
         (self.config.output_dir / 'mta.yaml').write_text(mta_content, encoding='utf-8')
+
+        # package.json — root-level npm deploy script
+        mtar = f'{self.config.artifact_id}_1.0.0.mtar'
+        pkg = {
+            'name': self.config.artifact_id,
+            'private': True,
+            'scripts': {
+                'deploy': f'mvn clean package -DskipTests && mbt build && cf deploy mta_archives/{mtar}'
+            }
+        }
+        (self.config.output_dir / 'package.json').write_text(
+            json.dumps(pkg, indent=2) + '\n', encoding='utf-8'
+        )
