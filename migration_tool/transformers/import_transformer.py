@@ -13,15 +13,17 @@ SAP_IMPORTS_REMOVE = [
 # SAP imports that must be removed — they reference libraries that do not exist
 # on BTP CF / Spring Boot. Keeping them causes compile failures.
 # We comment them out with a TODO marker so the developer can see what was there.
+# NOTE: com.sap.security.api.* is NOT here — stubs are generated instead so the
+# source keeps compiling with those imports intact.
 SAP_IMPORTS_REMOVE_WITH_TODO = {
-    re.compile(r'^(import\s+com\.sap\.security\.[^;]+;)\s*$', re.MULTILINE):
-        'SAP UME security — replace with Spring Security',
     re.compile(r'^(import\s+com\.sap\.conn\.jco\.[^;]+;)\s*$', re.MULTILINE):
         'SAP JCo (Java Connector) — requires library replacement',
     re.compile(r'^(import\s+com\.sap\.mw\.jco\.[^;]+;)\s*$', re.MULTILINE):
         'SAP JCo (Java Connector) — requires library replacement',
     re.compile(r'^(import\s+com\.sap\.engine\.[^;]+;)\s*$', re.MULTILINE):
         'SAP NetWeaver platform API — replace with Spring Boot equivalent',
+    re.compile(r'^(import\s+com\.bbt\.[^;]+;)\s*$', re.MULTILINE):
+        'Internal bank utility (com.bbt.*) — stub generated; replace with Spring Boot equivalent',
 }
 
 SAP_IMPORTS_FLAG = {
@@ -39,7 +41,8 @@ EJB_REPLACEMENTS = [
      'import org.springframework.beans.factory.annotation.Autowired;\n'),
     (re.compile(r'@Stateless\b'), '@Service'),
     (re.compile(r'@Stateful\b'), '@Service'),
-    (re.compile(r'@EJB\b'), '@Autowired'),
+    # Strip all @EJB attributes (e.g. mappedName="...") — @Autowired accepts none
+    (re.compile(r'@EJB\s*(?:\([^)]*\))?'), '@Autowired'),
 ]
 
 

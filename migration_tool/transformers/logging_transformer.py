@@ -12,25 +12,32 @@ SAP_LOGGING_IMPORTS = [
     re.compile(r'^import\s+com\.sap\.tc\.logging\.\*;\s*\n', re.MULTILINE),
 ]
 
-# private static final Location location = Location.getLocation(SomeClass.class);
+# private [static] [final] Location location = Location.getLocation(Foo.class / this);
+# Handles: private static final, private static, private final, private (instance field)
 LOCATION_FIELD = re.compile(
-    r'[ \t]*private\s+static\s+final\s+Location\s+\w+\s*=\s*'
-    r'Location\.getLocation\((\w+)\.class\)\s*;\s*\n'
+    r'[ \t]*private\s+(?:static\s+)?(?:final\s+)?Location\s+\w+\s*=\s*'
+    r'Location\.getLocation\([^)]+\)\s*;\s*\n'
 )
 
-# SimpleLogger.traceThrowable(Severity.LEVEL, location, "msg", e)
+# A Java expression fragment: string literals, concatenations, variable refs, method calls.
+# Stops at an unbalanced ')' or ';' so it doesn't bleed into the next statement.
+_EXPR = r'(?:[^();,"]|"(?:[^"\\]|\\.)*"|\([^()]*\))+'
+
+# SimpleLogger.traceThrowable(Severity.LEVEL, location, <msg-expr>, <exc-expr>)
 SIMPLE_LOGGER_THROWABLE = re.compile(
     r'SimpleLogger\.traceThrowable\(\s*'
     r'Severity\.(\w+)\s*,\s*\w+\s*,\s*'
-    r'("(?:[^"\\]|\\.)*")\s*,\s*(\w+)\s*\)',
+    r'(' + _EXPR + r')\s*,\s*(\w+)\s*\)',
     re.DOTALL
 )
 
-# SimpleLogger.trace(Severity.LEVEL, location, "msg")
+# SimpleLogger.trace(Severity.LEVEL, location, <msg-expr> [, <extra-expr>])
+# Handles: simple strings, string concatenations, object variables, 4-arg form
 SIMPLE_LOGGER_TRACE = re.compile(
     r'SimpleLogger\.trace\(\s*'
     r'Severity\.(\w+)\s*,\s*\w+\s*,\s*'
-    r'("(?:[^"\\]|\\.)*")\s*\)',
+    r'(' + _EXPR + r')'
+    r'(?:\s*,\s*' + _EXPR + r')?\s*\)',
     re.DOTALL
 )
 
@@ -90,15 +97,39 @@ class LoggingTransformer:
             return f'log.{level}({msg})'
         source = SIMPLE_LOGGER_TRACE.sub(replace_trace, source)
 
-        # 6. Inject SLF4J imports after last existing import or after package line
+        # 6. Catch-all: comment out any SimpleLogger.* calls that the specific
+        #    patterns above didn't match (4-arg forms, complex expressions, etc.)
+        if 'SimpleLogger.' in source:
+            source = self._comment_out_remaining_simple_logger(source)
+
+        # 7. Inject SLF4J imports after last existing import or after package line
         if 'import org.slf4j.Logger' not in source:
             source = self._inject_imports(source)
 
-        # 7. Inject logger field after class opening brace
+        # 8. Inject logger field after class opening brace
         if 'LoggerFactory.getLogger' not in source:
             source = self._inject_logger_field(source, class_name)
 
         return source, todos
+
+    def _comment_out_remaining_simple_logger(self, source: str) -> str:
+        """Comment out any SimpleLogger.* calls not converted by the specific patterns."""
+        lines = source.split('\n')
+        result = []
+        in_multiline = False
+        for line in lines:
+            stripped = line.lstrip()
+            if in_multiline:
+                result.append('// ' + line)
+                if ';' in line:
+                    in_multiline = False
+            elif 'SimpleLogger.' in stripped and not stripped.startswith('//'):
+                result.append('// TODO MANUAL — SAP logging (not converted): ' + line)
+                if ';' not in line:
+                    in_multiline = True
+            else:
+                result.append(line)
+        return '\n'.join(result)
 
     def _inject_imports(self, source: str) -> str:
         """Insert SLF4J imports after the last import statement."""

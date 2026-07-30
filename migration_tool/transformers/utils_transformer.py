@@ -12,12 +12,14 @@ SAP_PLATFORM_PATTERNS = {
         'Replace com.sap.engine.services.configuration.* with @ConfigurationProperties '
         'or @Value + application.properties. Remove ApplicationPropertiesChangeListener '
         'and replace with @RefreshScope (Spring Cloud Config) if live refresh is needed.',
-
-    re.compile(r'implements\s+[\w\s,]*ApplicationPropertiesChangeListener'):
-        'SAP ApplicationPropertiesChangeListener — remove this interface. '
-        'Use @RefreshScope + Spring Cloud Config, or @ConfigurationProperties with '
-        'a plain properties reload if live config refresh is needed.',
 }
+
+# SAP interfaces that must be stripped from implements clauses — their imports are
+# commented out by import_transformer, so leaving them in the class declaration
+# causes a "cannot find symbol" compile error.
+SAP_IMPLEMENTS_TO_REMOVE = [
+    'ApplicationPropertiesChangeListener',
+]
 
 # ── Removed or restricted APIs in Java 9–17 ──────────────────────────────────
 
@@ -64,8 +66,8 @@ JAVA_VERSION_PATTERNS = {
 
 class UtilsTransformer:
     """
-    Detects SAP platform APIs and removed/deprecated Java 9-17 APIs.
-    Does not modify source — only produces TODO items for the migration report.
+    Detects SAP platform APIs and removed/deprecated Java 9-17 APIs,
+    and actively removes SAP interfaces from implements clauses.
     """
 
     def __init__(self, config: MigrationConfig):
@@ -82,4 +84,29 @@ class UtilsTransformer:
             if pattern.search(source):
                 todos.append(f'MANUAL — Java version upgrade: {message}')
 
+        source = self._remove_sap_implements(source)
+
         return source, todos
+
+    def _remove_sap_implements(self, source: str) -> str:
+        """Remove SAP interface names from implements clauses to prevent compile errors."""
+        for iface in SAP_IMPLEMENTS_TO_REMOVE:
+            # Only interface in the list: "implements Foo {" → "{"
+            source = re.sub(
+                r'\bimplements\s+' + re.escape(iface) + r'\s*(?=\{)',
+                '',
+                source
+            )
+            # First of multiple: "implements Foo, Bar" → "implements Bar"
+            source = re.sub(
+                r'\bimplements\s+' + re.escape(iface) + r'\s*,\s*',
+                'implements ',
+                source
+            )
+            # Last or middle of multiple: ", Foo" (after other interfaces)
+            source = re.sub(
+                r',\s*' + re.escape(iface) + r'\b',
+                '',
+                source
+            )
+        return source

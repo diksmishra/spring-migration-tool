@@ -23,6 +23,7 @@ from migration_tool.generators.app_class_generator import AppClassGenerator
 from migration_tool.generators.properties_generator import PropertiesGenerator
 from migration_tool.generators.manifest_generator import ManifestGenerator
 from migration_tool.generators.hdi_generator import HdiGenerator
+from migration_tool.generators.stub_generator import StubGenerator
 from migration_tool.reporter import Reporter
 
 console = Console()
@@ -242,6 +243,7 @@ def main(source_dir, output, group_id, artifact_id, persistence,
         PropertiesGenerator(config).generate()
         ManifestGenerator(config).generate()
         hdi_count = HdiGenerator(config).generate()
+        StubGenerator(config).generate()
         _copy_resources(source_path, output_path)
         progress.update(t, completed=True)
 
