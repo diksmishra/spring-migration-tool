@@ -53,7 +53,8 @@ Step 6 — Deploy to BTP CF
 5. **Generates** Spring Boot scaffold files (`pom.xml` with Lombok, main class, properties, `manifest.yml`, `mta.yaml`, root `package.json`).
 6. **Generates** HANA Cloud HDI artifacts (`*.hdbtable`, `.hdiconfig`, `.hdinamespace`) from `.dtdbtable` ZIP exports.
 7. **Copies** non-Java resources (XML, properties, YAML, JSON) into the output tree, skipping any resources that belong to a pre-existing Spring Boot scaffold.
-8. **Writes** `migration-report.md` with one entry per `// TODO MANUAL` comment inserted into source, output-relative file paths, and a summary section for each pattern family (SAP security, SAP platform API, JNDI, JCo).
+8. **Generates** `run-openrewrite.sh` — a script that applies further modernization via [OpenRewrite](https://docs.openrewrite.org/) (Java version upgrade, Jakarta EE migration, Spring Boot version upgrade, Log4j→SLF4J logging migration, static-analysis cleanup). Not run during migration itself — see [Automated modernization (OpenRewrite)](#automated-modernization-openrewrite) below.
+9. **Writes** `migration-report.md` with one entry per `// TODO MANUAL` comment inserted into source, output-relative file paths, and a summary section for each pattern family (SAP security, SAP platform API, JNDI, JCo).
 
 ---
 
@@ -93,6 +94,14 @@ pip install -r requirements.txt
 ```
 
 > If PowerShell blocks activation: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
+
+### Running the test suite
+
+```powershell
+pytest
+```
+
+Runs the full test suite (transformers + generators) using isolated `tmp_path` fixtures — no real filesystem paths are touched.
 
 ---
 
@@ -268,6 +277,7 @@ If you have SAP NWDS ABAP Dictionary table definitions exported as a ZIP:
 ├── package.json                          Root deploy script: mvn clean package → mbt build → cf deploy
 ├── manifest.yml                          Standalone CF push (single module)
 ├── mta.yaml                              MTA deploy (HDI deployer + Java app)
+├── run-openrewrite.sh                    Optional further modernization — run later, in a connected environment
 ├── migration-report.md                   What was converted + every manual TODO item
 ├── db/                                   (hana-cloud only)
 │   ├── src/
@@ -308,6 +318,32 @@ If you have SAP NWDS ABAP Dictionary table definitions exported as a ZIP:
 
 ---
 
+## Automated modernization (OpenRewrite)
+
+Every run also generates `run-openrewrite.sh` at the project root. It applies [OpenRewrite](https://docs.openrewrite.org/) recipes to the migrated code via Maven, going further than this tool's own regex-based transforms for generic (non-SAP) modernization.
+
+**Why it's a separate script, not part of migration itself:** `migrate.py` is designed to run with zero network access (e.g. an air-gapped secure VDI). OpenRewrite's Maven plugin needs to download recipe artifacts from Maven Central, so it can't run at that point. Run the script later, from any environment with Maven repository access (e.g. a connected cloud IDE):
+
+```bash
+bash run-openrewrite.sh
+```
+
+No sign-up is required — it calls the open-source `rewrite-maven-plugin` directly against public Maven Central coordinates. (Moderne, the company behind OpenRewrite, sells a separate hosted platform for running recipes across many repositories at scale, but that's optional infrastructure, not a requirement for this script.)
+
+**Recipes, in the order they run:**
+
+| # | Recipe | Purpose |
+|---|---|---|
+| 1 | `UpgradeToJava25` | Bumps the language/compiler baseline first, so later recipes operate against the final target Java version |
+| 2 | `JakartaEE11` | `javax.*` → `jakarta.*` namespace migration |
+| 3 | `UpgradeSpringBoot_3_2` | Spring Boot framework + dependency version upgrade |
+| 4 | `Log4jToSlf4j` | Apache Log4j API → SLF4J |
+| 5 | `CommonStaticAnalysis` | Cleanup pass (unused imports, dead code) — must run last, since it cleans up debris left by the recipes above |
+
+Order matters for two of these: `JakartaEE11` must run before `UpgradeSpringBoot_3_2` (which bundles its own partial Jakarta migration — running the fuller one first makes that step a no-op instead of redoing partial work), and `CommonStaticAnalysis` must always run last. The rest are independent of each other. Prerequisites: Maven and a JDK, plus Maven Central access from wherever you run it.
+
+---
+
 ## Limitations
 
 - **No semantic analysis.** Transformations are regex-based. Unusual formatting of SAP logging calls may not be detected.
@@ -331,8 +367,9 @@ Every run produces `migration-report.md` in the output folder. It contains:
 | **Manual action required** | One sub-heading per file, one bullet per `// TODO MANUAL` comment — paths are output-relative (e.g. `src\main\java\com\example\service\impl\FooServiceImpl.java`) |
 | **Known patterns requiring follow-up** | Summary table per pattern family (SAP UME security, SAP platform API, JNDI, JCo) — shows every affected file for that family in one place |
 | **Skipped files** | Files excluded because their package indicates a pre-existing Spring Boot scaffold, not legacy code |
+| **Automated modernization (optional)** | Points to `run-openrewrite.sh` — see [Automated modernization (OpenRewrite)](#automated-modernization-openrewrite) |
 | **Test files** | JUnit 4 → 5 checklist if any test files were detected |
-| **Next steps** | Ordered checklist from `mvn compile` through to BTP CF deploy |
+| **Next steps** | Ordered checklist from `mvn compile` through to BTP CF deploy, including running `run-openrewrite.sh` |
 
 The report has a **1:1 relationship** between `// TODO MANUAL` comments in source and bullet points in the "Manual action required" section. Every commented-out SAP import line produces its own bullet — not a single bullet per file.
 
