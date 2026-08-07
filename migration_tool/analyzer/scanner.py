@@ -43,9 +43,10 @@ SAP_JCO_PATTERN       = re.compile(r'import\s+com\.sap\.conn\.jco\.|import\s+com
 SAP_ENGINE_PATTERN    = re.compile(r'import\s+com\.sap\.engine\.')
 PACKAGE_PATTERN       = re.compile(r'^\s*package\s+([\w.]+)\s*;', re.MULTILINE)
 
-# Packages that belong to a nascent Spring Boot scaffold, not the legacy app.
-# Files whose package matches any of these are skipped entirely.
-SCAFFOLD_PACKAGE_FRAGMENTS = ['shreya']
+# Packages that belong to a nascent Spring Boot scaffold, not the source project.
+# Add package fragments here to skip files that are already part of a Spring Boot
+# scaffold rather than the source legacy code (e.g. ['com.example.scaffold']).
+SCAFFOLD_PACKAGE_FRAGMENTS = []
 
 
 class ProjectScanner:

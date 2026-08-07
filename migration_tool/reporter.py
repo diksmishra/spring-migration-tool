@@ -158,44 +158,58 @@ class Reporter:
 
         # ── Next steps ────────────────────────────────────────────────────────
 
+        lines += [
+            '\n---\n',
+            '## Automated modernization (optional)\n',
+            '`run-openrewrite.sh` has been generated at the project root. It applies '
+            '[OpenRewrite](https://docs.openrewrite.org/) recipes (Java version upgrade, '
+            'Jakarta EE migration, Spring Boot version upgrade, Log4j→SLF4J logging migration, '
+            'static-analysis cleanup) via Maven, in that order. It is not run during migration, '
+            'since this step needs Maven repository access — run it later from a connected '
+            'environment (e.g. your cloud IDE), at any point before or after resolving the '
+            'manual items below.\n',
+        ]
+
         lines += ['\n---\n', '## Next steps (in order)\n']
 
         if self.config.persistence_mode == 'hana-cloud':
             svc = self.config.hdi_service_name or 'YOUR_HDI_SERVICE_INSTANCE'
             lines += [
                 '1. Run `mvn compile` — fix any remaining compilation errors.',
-                '2. Resolve all MANUAL items listed above, starting with SAP platform API replacements.',
-                '3. Fill in `src/main/resources/application-local.properties` with HANA Cloud dev credentials.',
-                '4. Test locally: `mvn spring-boot:run -Dspring-boot.run.profiles=local`',
-                '5. Implement service layer business logic.',
-                '6. Implement DAO/repository layer (Spring Data JPA or JdbcTemplate).',
-                '7. Configure Spring Security if the app requires authentication.',
-                '8. Write unit and integration tests.',
+                '2. In a connected environment, run `bash run-openrewrite.sh` to apply OpenRewrite modernization recipes.',
+                '3. Resolve all MANUAL items listed above, starting with SAP platform API replacements.',
+                '4. Fill in `src/main/resources/application-local.properties` with HANA Cloud dev credentials.',
+                '5. Test locally: `mvn spring-boot:run -Dspring-boot.run.profiles=local`',
+                '6. Implement service layer business logic.',
+                '7. Implement DAO/repository layer (Spring Data JPA or JdbcTemplate).',
+                '8. Configure Spring Security if the app requires authentication.',
+                '9. Write unit and integration tests.',
             ]
             if has_hdi:
                 lines += [
-                    '9. Run `npm install` inside `db/` to install `@sap/hdi-deploy`.',
-                    f'10. Verify HDI service instance name in `mta.yaml` matches `cf services` output.',
-                    '11. Deploy: `npm run deploy` (from project root — runs mvn + mbt build + cf deploy)',
-                    '12. Check: `cf logs <app>-app --recent` and `cf logs <app>-db --recent`',
+                    '10. Run `npm install` inside `db/` to install `@sap/hdi-deploy`.',
+                    f'11. Verify HDI service instance name in `mta.yaml` matches `cf services` output.',
+                    '12. Deploy: `npm run deploy` (from project root — runs mvn + mbt build + cf deploy)',
+                    '13. Check: `cf logs <app>-app --recent` and `cf logs <app>-db --recent`',
                 ]
             else:
                 lines += [
-                    f'9. Update `mta.yaml` — set HDI service instance name (`{svc}`) to match `cf services`.',
-                    '10. Build: `mvn package -DskipTests`',
-                    '11. Deploy: `cf push` (standalone) or `npm run deploy` (MTA)',
-                    '12. Verify: `cf logs <app-name>-app --recent`',
+                    f'10. Update `mta.yaml` — set HDI service instance name (`{svc}`) to match `cf services`.',
+                    '11. Build: `mvn package -DskipTests`',
+                    '12. Deploy: `cf push` (standalone) or `npm run deploy` (MTA)',
+                    '13. Verify: `cf logs <app-name>-app --recent`',
                 ]
         else:
             lines += [
                 '1. Run `mvn compile` — fix any remaining compilation errors.',
-                '2. Resolve all MANUAL items listed above.',
-                '3. Fill in `application.properties` with real datasource credentials.',
-                '4. Implement service layer business logic.',
-                '5. Implement DAO/repository layer (Spring Data JPA or JdbcTemplate).',
-                '6. Configure Spring Security if the app requires authentication.',
-                '7. Write unit and integration tests.',
-                '8. Run `mvn spring-boot:run` and validate endpoints.',
+                '2. In a connected environment, run `bash run-openrewrite.sh` to apply OpenRewrite modernization recipes.',
+                '3. Resolve all MANUAL items listed above.',
+                '4. Fill in `application.properties` with real datasource credentials.',
+                '5. Implement service layer business logic.',
+                '6. Implement DAO/repository layer (Spring Data JPA or JdbcTemplate).',
+                '7. Configure Spring Security if the app requires authentication.',
+                '8. Write unit and integration tests.',
+                '9. Run `mvn spring-boot:run` and validate endpoints.',
             ]
 
         report_path.write_text('\n'.join(lines), encoding='utf-8')

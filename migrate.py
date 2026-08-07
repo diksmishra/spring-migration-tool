@@ -24,6 +24,7 @@ from migration_tool.generators.properties_generator import PropertiesGenerator
 from migration_tool.generators.manifest_generator import ManifestGenerator
 from migration_tool.generators.hdi_generator import HdiGenerator
 from migration_tool.generators.stub_generator import StubGenerator
+from migration_tool.generators.openrewrite_generator import OpenRewriteGenerator
 from migration_tool.reporter import Reporter
 
 console = Console()
@@ -32,8 +33,8 @@ console = Console()
 @click.command()
 @click.argument('source_dir', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option('--output',            '-o', default=None, help='Output directory for converted project')
-@click.option('--group-id',          '-g', default=None, help='Maven group ID (e.g. com.truist.fsr)')
-@click.option('--artifact-id',       '-a', default=None, help='Maven artifact ID (e.g. fsr-regrep)')
+@click.option('--group-id',          '-g', default=None, help='Maven group ID (e.g. com.example.myapp)')
+@click.option('--artifact-id',       '-a', default=None, help='Maven artifact ID (e.g. my-service)')
 @click.option('--persistence',       '-p',
               type=click.Choice(['jpa', 'jdbc', 'sap', 'hana-cloud'], case_sensitive=False),
               default=None,
@@ -244,6 +245,7 @@ def main(source_dir, output, group_id, artifact_id, persistence,
         ManifestGenerator(config).generate()
         hdi_count = HdiGenerator(config).generate()
         StubGenerator(config).generate()
+        OpenRewriteGenerator(config).generate()
         _copy_resources(source_path, output_path)
         progress.update(t, completed=True)
 

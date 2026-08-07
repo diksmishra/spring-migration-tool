@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Applies OpenRewrite modernization recipes to this project.
+#
+# Run this in an environment with Maven repository access (e.g. a connected
+# cloud IDE) — it downloads the OpenRewrite plugin and recipe artifacts from
+# Maven Central at execution time, without modifying pom.xml. It is not
+# intended to run during migration itself, since that may happen on an
+# air-gapped host with no repository access.
+#
+# Recipes run in the order listed below. Most are independent of each other,
+# but two orderings matter:
+#   - JakartaEE11 before UpgradeSpringBoot_3_2: the Spring Boot 3 recipe
+#     already bundles its own javax->jakarta migration (EE9-level), so
+#     running the fuller JakartaEE11 migration first means that bundled step
+#     no-ops instead of doing a partial jump that has to be redone.
+#   - CommonStaticAnalysis last: it's a cleanup pass (unused imports, dead
+#     code) over whatever the earlier recipes left behind, so it must run
+#     after every other recipe, not before.
+set -euo pipefail
+
+RECIPE_ARTIFACTS="org.openrewrite.recipe:rewrite-migrate-java:RELEASE,org.openrewrite.recipe:rewrite-spring:RELEASE,org.openrewrite.recipe:rewrite-logging-frameworks:RELEASE,org.openrewrite.recipe:rewrite-static-analysis:RELEASE"
+ACTIVE_RECIPES="org.openrewrite.java.migrate.UpgradeToJava25,org.openrewrite.java.migrate.jakarta.JakartaEE11,org.openrewrite.java.spring.boot3.UpgradeSpringBoot_3_2,org.openrewrite.java.logging.slf4j.Log4jToSlf4j,org.openrewrite.staticanalysis.CommonStaticAnalysis"
+
+mvn -U org.openrewrite.maven:rewrite-maven-plugin:RELEASE:run \
+  -Drewrite.recipeArtifactCoordinates="${RECIPE_ARTIFACTS}" \
+  -Drewrite.activeRecipes="${ACTIVE_RECIPES}"

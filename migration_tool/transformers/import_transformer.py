@@ -22,8 +22,6 @@ SAP_IMPORTS_REMOVE_WITH_TODO = {
         'SAP JCo (Java Connector) — requires library replacement',
     re.compile(r'^(import\s+com\.sap\.engine\.[^;]+;)\s*$', re.MULTILINE):
         'SAP NetWeaver platform API — replace with Spring Boot equivalent',
-    re.compile(r'^(import\s+com\.bbt\.[^;]+;)\s*$', re.MULTILINE):
-        'Internal bank utility (com.bbt.*) — stub generated; replace with Spring Boot equivalent',
 }
 
 SAP_IMPORTS_FLAG = {

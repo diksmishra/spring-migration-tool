@@ -1,8 +1,8 @@
 """
-Generates compilable stub classes for SAP and internal-bank APIs that have
-no Spring Boot equivalent. Stubs live in the original packages so existing
-imports compile without modification; they throw UnsupportedOperationException
-at runtime, making it obvious which call paths still need replacement.
+Generates compilable stub classes for SAP APIs that have no Spring Boot
+equivalent. Stubs live in the original packages so existing imports compile
+without modification; they throw UnsupportedOperationException at runtime,
+making it obvious which call paths still need replacement.
 """
 from pathlib import Path
 from migration_tool.config import MigrationConfig
@@ -107,19 +107,6 @@ package com.sap.engine.services.configuration.appconfiguration;
  */
 public interface ApplicationPropertiesChangeListener {
     void propertiesChanged();
-}
-'''
-    ),
-    (
-        'com/bbt/cmn/util/services/CommonUtilityBeanLocal.java',
-        '''\
-package com.bbt.cmn.util.services;
-
-/**
- * Stub — internal bank utility with no Spring Boot equivalent.
- * Add methods as needed and replace implementations with Spring Boot services.
- */
-public interface CommonUtilityBeanLocal {
 }
 '''
     ),
