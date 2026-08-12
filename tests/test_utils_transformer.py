@@ -92,7 +92,3 @@ def test_detects_finalize_method(tmp_path):
     assert any('finalize' in t for t in todos)
 
 
-def test_detects_javax_jws_import(tmp_path):
-    src = 'import javax.jws.WebService;\n@WebService\npublic class Foo {}\n'
-    _, todos = transform(src, tmp_path)
-    assert any('JAX-WS' in t for t in todos)

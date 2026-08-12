@@ -67,6 +67,10 @@ JAVA_EE_CONTAINER_IMPORTS_REMOVE_WITH_TODO = {
     re.compile(r'^(import\s+org\.springframework\.ejb\.[^;]+;)\s*$', re.MULTILINE):
         'Spring EJB-container integration module — meaningless outside an EJB container; '
         'remove and rely on standard Spring dependency injection.',
+    re.compile(r'^(import\s+javax\.jws\.[^;]+;)\s*$', re.MULTILINE):
+        'JAX-WS (javax.jws.*) was removed from the JDK in Java 11 and is not included by Spring Boot. '
+        'This class implements a SOAP web service — either add jakarta.xml.ws-api plus a JAX-WS runtime '
+        'and rewrite javax.jws to jakarta.jws, or replace with a Spring REST/SOAP endpoint.',
 }
 
 

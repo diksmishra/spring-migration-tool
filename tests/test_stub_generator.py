@@ -27,6 +27,9 @@ EXPECTED_STUBS = [
     ('com/sap/security/api/IPrincipal.java',      'package com.sap.security.api;',          'interface IPrincipal'),
     ('com/sap/security/api/IUserFactory.java',    'package com.sap.security.api;',          'interface IUserFactory'),
     ('com/sap/security/api/IRoleFactory.java',    'package com.sap.security.api;',          'interface IRoleFactory'),
+    ('com/sap/security/api/IGroup.java',          'package com.sap.security.api;',          'interface IGroup'),
+    ('com/sap/security/api/IGroupFactory.java',   'package com.sap.security.api;',          'interface IGroupFactory'),
+    ('com/sap/security/api/IAuthenticator.java',  'package com.sap.security.api;',          'interface IAuthenticator'),
     ('com/sap/security/api/UMException.java',     'package com.sap.security.api;',          'class UMException'),
     ('com/sap/security/api/UMFactory.java',       'package com.sap.security.api;',          'class UMFactory'),
     (
@@ -59,6 +62,16 @@ def test_umfactory_stub_throws_uoe(tmp_path):
     content = (tmp_path / 'out' / 'src' / 'main' / 'java'
                / 'com/sap/security/api/UMFactory.java').read_text()
     assert 'UnsupportedOperationException' in content
+
+
+def test_umfactory_has_group_factory_and_authenticator_methods(tmp_path):
+    """Real-world usage calls UMFactory.getGroupFactory() and .getAuthenticator() —
+    found missing via a real compile failure."""
+    StubGenerator(_config(tmp_path)).generate()
+    content = (tmp_path / 'out' / 'src' / 'main' / 'java'
+               / 'com/sap/security/api/UMFactory.java').read_text()
+    assert 'IGroupFactory getGroupFactory()' in content
+    assert 'IAuthenticator getAuthenticator()' in content
 
 
 def test_generate_is_idempotent(tmp_path):

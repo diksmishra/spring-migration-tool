@@ -63,6 +63,40 @@ public interface IRoleFactory {
 '''
     ),
     (
+        'com/sap/security/api/IGroup.java',
+        '''\
+package com.sap.security.api;
+
+/** Stub — replace with Spring Security GrantedAuthority / group membership checks. */
+public interface IGroup {
+    String getUniqueName();
+    String getDisplayName();
+}
+'''
+    ),
+    (
+        'com/sap/security/api/IGroupFactory.java',
+        '''\
+package com.sap.security.api;
+
+/** Stub — replace with Spring Security GrantedAuthority / group lookups. */
+public interface IGroupFactory {
+    IGroup getGroupByUniqueName(String uniqueName) throws UMException;
+}
+'''
+    ),
+    (
+        'com/sap/security/api/IAuthenticator.java',
+        '''\
+package com.sap.security.api;
+
+/** Stub — replace with SecurityContextHolder.getContext().getAuthentication(). */
+public interface IAuthenticator {
+    IUser getLoggedInUser();
+}
+'''
+    ),
+    (
         'com/sap/security/api/UMException.java',
         '''\
 package com.sap.security.api;
@@ -104,6 +138,16 @@ public class UMFactory {
     public static IRoleFactory getRoleFactory() {
         throw new UnsupportedOperationException(
             "SAP UMFactory stub — replace with Spring Security role checks");
+    }
+
+    public static IGroupFactory getGroupFactory() {
+        throw new UnsupportedOperationException(
+            "SAP UMFactory stub — replace with Spring Security group/authority checks");
+    }
+
+    public static IAuthenticator getAuthenticator() {
+        throw new UnsupportedOperationException(
+            "SAP UMFactory stub — use SecurityContextHolder.getContext().getAuthentication()");
     }
 }
 '''

@@ -61,6 +61,20 @@ def test_removes_non_static_location_field(tmp_path):
     assert 'Location loc' not in result
 
 
+def test_removes_package_private_location_field(tmp_path):
+    """No access modifier at all (package-private) — a real pattern seen in the wild,
+    not just the private/private-static/private-final variants."""
+    src = (
+        'import com.sap.tc.logging.Location;\n'
+        'public class Qux {\n'
+        '\tLocation location = Location.getLocation(this);\n'
+        '}\n'
+    )
+    result = transform(src, tmp_path)
+    assert 'Location location' not in result
+    assert 'Location.getLocation' not in result
+
+
 def test_removes_location_field_with_this(tmp_path):
     src = (
         'import com.sap.tc.logging.Location;\n'
@@ -186,6 +200,26 @@ def test_does_not_double_inject_imports(tmp_path):
     )
     result = transform(src, tmp_path)
     assert result.count('import org.slf4j.Logger;') == 1
+
+
+# ── Conflicting Logger import removal ─────────────────────────────────────────
+
+def test_removes_conflicting_java_util_logging_import(tmp_path):
+    """java.util.logging.Logger can't coexist with the injected org.slf4j.Logger —
+    Java disallows two single-type-imports with the same simple name. Found via a
+    real compile failure ('reference to Logger is ambiguous')."""
+    src = (
+        'import java.util.logging.Logger;\n'
+        'import com.sap.tc.logging.SimpleLogger;\n'
+        'import com.sap.tc.logging.Severity;\n'
+        'public class Foo {\n'
+        '    void m() { SimpleLogger.trace(Severity.INFO, loc, "hi"); }\n'
+        '}\n'
+    )
+    result = transform(src, tmp_path)
+    assert 'import java.util.logging.Logger;' not in result
+    assert 'import org.slf4j.Logger;' in result
+    assert result.count('.Logger;') == 1  # only one Logger import must survive
 
 
 # ── Logger field injection ────────────────────────────────────────────────────

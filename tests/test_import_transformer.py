@@ -179,6 +179,15 @@ def test_spring_ejb_interceptor_import_commented_out(tmp_path):
     assert '// import org.springframework.ejb.interceptor' in result
 
 
+def test_javax_jws_import_commented_out(tmp_path):
+    """javax.jws (JAX-WS) doesn't exist on the JDK or in Spring Boot — must be
+    commented out, not just flagged, or "package does not exist" persists."""
+    src = 'import javax.jws.WebService;\n@WebService\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path)
+    assert '// import javax.jws.WebService' in result
+    assert any('JAX-WS' in t for t in todos)
+
+
 def test_ejb_conversion_still_works_alongside_container_plumbing_removal(tmp_path):
     """The Stateless/Stateful/EJB→Spring swap must still fire even though the
     broader javax.ejb.* comment-out now runs right after it."""

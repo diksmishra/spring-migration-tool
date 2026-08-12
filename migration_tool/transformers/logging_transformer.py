@@ -12,11 +12,20 @@ SAP_LOGGING_IMPORTS = [
     re.compile(r'^import\s+com\.sap\.tc\.logging\.\*;\s*\n', re.MULTILINE),
 ]
 
-# private [static] [final] Location location = Location.getLocation(Foo.class / this);
-# Handles: private static final, private static, private final, private (instance field)
+# [private] [static] [final] Location location = Location.getLocation(Foo.class / this);
+# Handles: private static final, private static, private final, private, and
+# package-private (no modifier at all — a real pattern seen in the wild).
 LOCATION_FIELD = re.compile(
-    r'[ \t]*private\s+(?:static\s+)?(?:final\s+)?Location\s+\w+\s*=\s*'
+    r'[ \t]*(?:private\s+)?(?:static\s+)?(?:final\s+)?Location\s+\w+\s*=\s*'
     r'Location\.getLocation\([^)]+\)\s*;\s*\n'
+)
+
+# Any pre-existing Logger import other than SLF4J's own — can't coexist with the
+# org.slf4j.Logger import this transformer is about to inject (Java disallows two
+# single-type-imports with the same simple name). Most commonly java.util.logging.Logger,
+# left over and unused once the class's real logging went through SAP's SimpleLogger.
+OTHER_LOGGER_IMPORT = re.compile(
+    r'^import\s+(?!org\.slf4j\.Logger;)[\w.]+\.Logger;\s*\n', re.MULTILINE
 )
 
 # A Java expression fragment: string literals, concatenations, variable refs, method calls.
@@ -82,6 +91,10 @@ class LoggingTransformer:
         # 1. Remove SAP logging imports
         for pattern in SAP_LOGGING_IMPORTS:
             source = pattern.sub('', source)
+
+        # 1b. Remove any other pre-existing Logger import — it would conflict
+        # with the org.slf4j.Logger import about to be injected below.
+        source = OTHER_LOGGER_IMPORT.sub('', source)
 
         # 2. Detect class name for the logger field
         class_match = CLASS_OPEN.search(source)

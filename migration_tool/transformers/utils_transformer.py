@@ -29,11 +29,6 @@ JAVA_VERSION_PATTERNS = {
         'Add dependency: jakarta.xml.bind:jakarta.xml.bind-api:4.0.0 '
         'and com.sun.xml.bind:jaxb-impl:4.0.4 to pom.xml.',
 
-    re.compile(r'import\s+javax\.jws\.[^;]+;', re.MULTILINE):
-        'JAX-WS (javax.jws.*) was removed from the JDK in Java 11 and is not included by Spring Boot. '
-        'This class implements a SOAP web service — either add jakarta.xml.ws-api plus a JAX-WS runtime '
-        'and rewrite javax.jws → jakarta.jws, or replace with a Spring REST/SOAP endpoint.',
-
     re.compile(r'import\s+sun\.[^;]+;', re.MULTILINE):
         'Internal sun.* API — not part of the public JDK contract and may be '
         'inaccessible under Java 17 module restrictions. Replace with standard '
