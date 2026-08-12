@@ -49,7 +49,7 @@ Step 6 — Deploy to BTP CF
    - Converts EJB annotations: `@Stateless` / `@Stateful` → `@Service`, `@EJB` → `@Autowired`
    - Removes OpenJPA-specific imports
    - **Comments out** imports that have no classpath equivalent on BTP CF/Spring Boot — `com.sap.engine.*`, `com.sap.conn.jco.*`, `com.sap.bpm.*`, `com.sap.scheduler.*`, `javax.resource.cci.*`, leftover `javax.ejb.*`/`javax.interceptor.*`/`org.springframework.ejb.*`, and `javax.jws.*` (`com.sap.security.*` is the one exception — see below). Leaving these as live `import` statements causes compile failures; each commented-out line gets a `// TODO MANUAL` marker and a 1:1 entry in `migration-report.md`. **Note:** this only fixes the import line itself — if the same type is used as a field, parameter, return type, or inside a method body, that usage still needs manual fixing (see [Limitations](#limitations))
-   - **Comments out** any additional import prefixes you supply via `--unavailable-packages` — for a specific codebase's own internal/proprietary packages, without hardcoding any client-specific strings into the tool itself
+   - **Discovers and stubs, or comments out,** any additional import prefixes you supply via `--unavailable-packages` — for a specific codebase's own internal/proprietary packages, without hardcoding any client-specific strings into the tool itself. See [Automated stub discovery](#automated-stub-discovery---unavailable-packages) below for how this differs from the built-in categories above.
 4. **Places output files** using each file's own `package` declaration, so flat legacy projects (no `src/main/java/` tree) land in the correct nested directory. Test files (path contains `/test/` or name ends in `Test.java` / `Tests.java` / `IT.java`) are routed to `src/test/java/`.
 5. **Generates** Spring Boot scaffold files (`pom.xml` with Lombok, main class, properties, `manifest.yml`, `mta.yaml`, root `package.json`).
 6. **Generates** HANA Cloud HDI artifacts (`*.hdbtable`, `.hdiconfig`, `.hdinamespace`) from `.dtdbtable` ZIP exports.
@@ -163,7 +163,7 @@ python migrate.py "C:\path\to\legacy-java-project" `
 | `--spring-boot-version` | — | `3.2.5` | Spring Boot parent version |
 | `--java-version` | — | `17` | Java compile target |
 | `--db-artifacts` | `-d` | _(none)_ | Path to ZIP containing `.dtdbtable` files |
-| `--unavailable-packages` | `-u` | _(none)_ | Comma-separated import prefixes to comment out with a TODO — for a codebase's own internal/proprietary packages the target environment doesn't have (see [Q15](#q15-my-codebase-has-its-own-internal-packages-that-dont-exist-in-the-target-environment)) |
+| `--unavailable-packages` | `-u` | _(none)_ | Comma-separated import prefixes for a codebase's own internal/proprietary packages the target environment doesn't have — discovers usage and generates a matching stub where it can, comments out with a TODO otherwise (see [Automated stub discovery](#automated-stub-discovery---unavailable-packages) and [Q15](#q15-my-codebase-has-its-own-internal-packages-that-dont-exist-in-the-target-environment)) |
 | `--non-interactive` | — | `false` | Skip all prompts; use provided values |
 
 ---
@@ -349,10 +349,28 @@ Order matters for two of these: `JakartaEE11` must run before `UpgradeSpringBoot
 
 ---
 
+## Automated stub discovery (`--unavailable-packages`)
+
+For your codebase's own internal packages, the tool goes a step further than commenting out the import: it parses each file to discover exactly how the type is used — which methods get called on it, with how many arguments, and (when it can tell from a declaration) what it returns — and automatically writes a matching stub interface, the same way the 10 built-in SAP UME stubs already work. The import stays live, so usages elsewhere in the file keep compiling too, not just the import line itself.
+
+```powershell
+python migrate.py "C:\path\to\legacy-java-project" --unavailable-packages "com.example.myapp.internal" --non-interactive ...
+```
+
+**What it can't see (documented, not silently guessed at):** only direct `variable.method()` or `Type.staticMethod()` calls are detected — a chained call (`a.b().c()`), a call through `this.field`, or a call on a cast expression won't be picked up, since there's no reliable way to trace those without full type resolution. Those usages fall back to needing a manual fix, same as today. Return types are only trusted when they're a plain `java.lang` type, a primitive, or a common JDK collection (`List`/`Set`/`Map`/`Collection`/`Optional`) — anything else becomes `Object` with a comment flagging the guess, so the stub still compiles even when the real type can't be confidently inferred.
+
+**Local memory, never shared:** if you migrate more than one app on the same machine, the tool remembers method shapes it has discovered before in a small file outside this repo (`~/.migration_tool_cache`) — never committed, never synced anywhere, never seen by another developer's machine. It can only *fill a gap* (a method your current app's own code never actually calls, most often one of the cases above that couldn't be detected) — it can never override what this run actually found, because the same class name can genuinely mean something different from one app to the next. Anything filled in this way is clearly marked in the generated stub:
+```java
+// inherited from a previous migration on this machine — this app's
+// own code never called it; confirm the signature before relying on it
+```
+
+---
+
 ## Limitations
 
 - **No semantic analysis.** Transformations are regex-based, not AST-based. Unusual formatting may not be detected, and — see the next point — the tool cannot safely rewrite a *usage* of a type, only the self-contained `import` line that brings it in.
-- **Commenting an import doesn't fix usages elsewhere in the file.** This applies to every "comments out" category below (`com.sap.engine.*`, `com.sap.conn.jco.*`, `com.sap.bpm.*`, `com.sap.scheduler.*`, `javax.resource.cci.*`, `javax.ejb.*`/`javax.interceptor.*`/`org.springframework.ejb.*`, `javax.jws.*`, and anything passed via `--unavailable-packages`): if the type is also used as a field, a method parameter/return type, an annotation argument, or inside a method body, that usage still fails to compile as `cannot find symbol` — see [Q10](#q10-mvn-compile-still-fails-with-cannot-find-symbol-on-sapejbbpm-classes). Safely rewriting a usage (as opposed to a self-contained import line) needs real Java structural understanding — you can't blank out a method's return type without removing the whole method, and removing a method can break its callers elsewhere. That's out of scope for a regex-based tool.
+- **Commenting an import doesn't fix usages elsewhere in the file.** This applies to every built-in "comments out" category (`com.sap.engine.*`, `com.sap.conn.jco.*`, `com.sap.bpm.*`, `com.sap.scheduler.*`, `javax.resource.cci.*`, `javax.ejb.*`/`javax.interceptor.*`/`org.springframework.ejb.*`, `javax.jws.*`): if the type is also used as a field, a method parameter/return type, an annotation argument, or inside a method body, that usage still fails to compile as `cannot find symbol` — see [Q10](#q10-mvn-compile-still-fails-with-cannot-find-symbol-on-sapejbbpm-classes). Safely rewriting a usage (as opposed to a self-contained import line) needs real Java structural understanding — you can't blank out a method's return type without removing the whole method, and removing a method can break its callers elsewhere. That's out of scope for a regex-based tool. `--unavailable-packages` gets a better answer instead — see [Automated stub discovery](#automated-stub-discovery---unavailable-packages) — though even that only detects direct calls, not chained/cast usages.
 - **SAP UME Security (`com.sap.security.*`) is the one exception** — imports stay live, and `StubGenerator` writes ten compilable stub classes/interfaces (`IUser`, `IPrincipal`, `IUserFactory`, `IRoleFactory`, `IGroup`, `IGroupFactory`, `IAuthenticator`, `UMException`, `UMFactory`, `ApplicationPropertiesChangeListener`) covering the most common `UMFactory.*` calls, throwing `UnsupportedOperationException` at runtime. This is best-effort, not exhaustive — an unusual UME class or `UMFactory` method not in that list will still fail as `cannot find symbol`.
 - **SAP BPM (`com.sap.bpm.*`).** Being replaced by Build Process Automation (BPA) on BTP — there's no mechanical equivalent to migrate to yet. Imports are commented out; usages need a full rewrite once the BPA replacement is designed.
 - **SAP Job Scheduler / MDB (`com.sap.scheduler.*`, `@MessageDriven`).** No Spring Boot equivalent — Spring Boot doesn't run inside an EJB container. Rewrite as a Spring `@Scheduled` task or `@JmsListener` depending on what triggered the original job.
@@ -606,4 +624,4 @@ If a stray `com/FooApplication.java` was already generated by a previous run, de
 ```powershell
 python migrate.py "C:\path\to\legacy-java-project" --unavailable-packages "com.example.myapp.internal,com.example.sharedutils" --non-interactive ...
 ```
-Each matching import gets commented out with a `// TODO MANUAL` marker, same as the built-in SAP categories. As always, this only fixes the import line — usages elsewhere in the file still need manual attention (see [Q10](#q10-mvn-compile-still-fails-with-cannot-find-symbol-on-sapejbbpm-classes)).
+For anything the tool can figure out the shape of, it keeps the import live and generates a matching stub automatically instead of commenting it out — see [Automated stub discovery](#automated-stub-discovery---unavailable-packages). Only usages it genuinely can't detect (chained calls, casts, wildcard imports) fall back to the `// TODO MANUAL` comment-out, same as the built-in SAP categories (see [Q10](#q10-mvn-compile-still-fails-with-cannot-find-symbol-on-sapejbbpm-classes)).

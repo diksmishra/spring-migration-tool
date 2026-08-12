@@ -106,16 +106,38 @@ class ImportTransformer:
 
         # Internal/proprietary packages supplied per-run (e.g. a client's own
         # utility packages) — not hardcoded, since this tool stays client-agnostic.
-        # See --unavailable-packages.
+        # See --unavailable-packages. If usage_harvester found a specific,
+        # non-wildcard import here and StubGenerator will synthesize a matching
+        # stub for it, leave the import live — same carve-out as
+        # com.sap.security.api.*, just data-driven instead of hardcoded.
+        harvested = scan_result.get('unavailable_pkg_usages', {}) if scan_result else {}
         for prefix in self.config.unavailable_packages:
             pattern = re.compile(
                 r'^(import\s+' + re.escape(prefix) + r'[^;]*;)\s*$', re.MULTILINE
             )
+            matches = pattern.findall(source)
+            if not matches:
+                continue
+
             message = (
                 f'Internal/proprietary import ({prefix}) — not available in the target '
                 'environment; replace with a Spring Boot equivalent, or vendor the dependency if it must be kept.'
             )
-            source, todos = self._comment_out_with_todo(source, todos, {pattern: message})
+
+            def _maybe_comment_out(m, msg=message):
+                import_line = m.group(1)
+                name_match = re.match(r'import\s+([\w.]+)\s*;', import_line)
+                full_name = name_match.group(1) if name_match else ''
+                if full_name in harvested:
+                    return import_line
+                return f'// TODO MANUAL — {msg}\n// {import_line}'
+
+            source = pattern.sub(_maybe_comment_out, source)
+            for import_line in matches:
+                name_match = re.match(r'import\s+([\w.]+)\s*;', import_line)
+                full_name = name_match.group(1) if name_match else ''
+                if full_name not in harvested:
+                    todos.append(f'MANUAL: {message} — `{import_line.strip()}`')
 
         return source, todos
 

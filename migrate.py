@@ -14,6 +14,8 @@ from rich.table import Table
 
 from migration_tool.config import MigrationConfig
 from migration_tool.analyzer.scanner import ProjectScanner
+from migration_tool.analyzer import usage_harvester
+from migration_tool.analyzer import local_shape_cache
 from migration_tool.transformers.logging_transformer import LoggingTransformer
 from migration_tool.transformers.import_transformer import ImportTransformer
 from migration_tool.transformers.persistence_transformer import PersistenceTransformer
@@ -187,6 +189,39 @@ def main(source_dir, output, base_package, group_id, artifact_id, persistence,
     skipped_packages = scan_result['classified'].get('skipped', [])
     skipped_set      = set(skipped_packages)
     all_files        = [f for f in scan_result['all_java_files'] if f not in skipped_set]
+
+    # Harvest how --unavailable-packages types are actually used, so
+    # StubGenerator can synthesize a matching stub instead of the import
+    # just getting commented out with the usage left broken. Scoped to
+    # --unavailable-packages only — see CLAUDE.md.
+    #
+    # A per-developer-machine cache (outside this repo, never git-tracked —
+    # see analyzer/local_shape_cache.py) can fill in methods this app's own
+    # source never references at all, e.g. because usage_harvester's known
+    # gaps (chained calls, casts) missed them. It NEVER overrides what this
+    # run actually finds — the same type can genuinely have a different real
+    # shape in a different app, so fresh, this-app evidence always wins.
+    if config.unavailable_packages:
+        fresh: dict = {}
+        for java_file in all_files:
+            source = java_file.read_text(encoding='utf-8', errors='replace')
+            targets = usage_harvester.unavailable_import_targets(source, config.unavailable_packages)
+            if not targets:
+                continue
+            for full_name, shape in usage_harvester.harvest(source, targets).items():
+                entry = fresh.setdefault(full_name, {'methods': {}})
+                for key, method in shape['methods'].items():
+                    existing = entry['methods'].get(key)
+                    if existing is None:
+                        entry['methods'][key] = method
+                    else:
+                        if existing['return_type'] is None and method['return_type'] is not None:
+                            existing['return_type'] = method['return_type']
+                        existing['static'] = existing['static'] or method['static']
+
+        cache = local_shape_cache.load()
+        scan_result['unavailable_pkg_usages'] = local_shape_cache.apply_as_fallback(fresh, cache)
+        local_shape_cache.save(local_shape_cache.merge_fresh_into_cache(cache, fresh))
 
     transformers = [
         LoggingTransformer(config),

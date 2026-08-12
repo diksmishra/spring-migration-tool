@@ -22,12 +22,12 @@ def _config(tmp_path):
     )
 
 
-def transform(source, tmp_path, unavailable_packages=None):
+def transform(source, tmp_path, unavailable_packages=None, scan_result=None):
     cfg = _config(tmp_path)
     if unavailable_packages:
         cfg.unavailable_packages = unavailable_packages
     t = ImportTransformer(cfg)
-    result, todos = t.transform(source, Path('Foo.java'), {})
+    result, todos = t.transform(source, Path('Foo.java'), scan_result if scan_result is not None else {})
     return result, todos
 
 
@@ -220,3 +220,38 @@ def test_unavailable_packages_noop_when_not_supplied(tmp_path):
     result, todos = transform(src, tmp_path)
     assert 'import com.bbt.cmn.util.services.CommonUtilityBeanLocal;' in result
     assert not any('com.bbt' in t for t in todos)
+
+
+def test_unavailable_packages_import_kept_live_when_harvested(tmp_path):
+    """If usage_harvester found this type and StubGenerator will synthesize a
+    matching stub for it, the import must stay live — same carve-out as
+    com.sap.security.api.*, just data-driven via scan_result."""
+    src = 'import com.bbt.cmn.util.services.CommonUtilityBeanLocal;\npublic class Foo {}\n'
+    scan_result = {
+        'unavailable_pkg_usages': {
+            'com.bbt.cmn.util.services.CommonUtilityBeanLocal': {'methods': {}},
+        }
+    }
+    result, todos = transform(src, tmp_path, unavailable_packages=['com.bbt.cmn'], scan_result=scan_result)
+    assert 'import com.bbt.cmn.util.services.CommonUtilityBeanLocal;' in result
+    assert '// import com.bbt.cmn' not in result
+    assert not any('com.bbt' in t for t in todos)
+
+
+def test_unavailable_packages_other_imports_still_commented_when_not_harvested(tmp_path):
+    """Only the specific harvested type is spared — a different import under the
+    same prefix that wasn't harvested still gets commented out as before."""
+    src = (
+        'import com.bbt.cmn.util.services.CommonUtilityBeanLocal;\n'
+        'import com.bbt.cmn.util.filenet.FilenetServiceBeanLocal;\n'
+        'public class Foo {}\n'
+    )
+    scan_result = {
+        'unavailable_pkg_usages': {
+            'com.bbt.cmn.util.services.CommonUtilityBeanLocal': {'methods': {}},
+        }
+    }
+    result, todos = transform(src, tmp_path, unavailable_packages=['com.bbt.cmn'], scan_result=scan_result)
+    assert 'import com.bbt.cmn.util.services.CommonUtilityBeanLocal;' in result
+    assert '// import com.bbt.cmn.util.filenet.FilenetServiceBeanLocal;' in result
+    assert any('FilenetServiceBeanLocal' in t for t in todos)
