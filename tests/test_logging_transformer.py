@@ -202,6 +202,34 @@ def test_injects_logger_field_with_class_name(tmp_path):
     assert 'LoggerFactory.getLogger(MyService.class)' in result
 
 
+def test_ignores_class_keyword_inside_javadoc_comment(tmp_path):
+    """A Javadoc line like '...implementation class for: FooJob' must not be
+    mistaken for the real class declaration — the logger field must land inside
+    the actual class body, not inside a preceding annotation's array literal."""
+    src = (
+        'import com.sap.tc.logging.SimpleLogger;\n'
+        'import com.sap.tc.logging.Severity;\n'
+        '\n'
+        '/**\n'
+        ' * Message-Driven Bean implementation class for: FooJob\n'
+        ' */\n'
+        '@MessageDriven(\n'
+        '        activationConfig = {\n'
+        '            @ActivationConfigProperty(propertyName = "x", propertyValue = "y")\n'
+        '        })\n'
+        'public class FooJob {\n'
+        '    void m() { SimpleLogger.trace(Severity.INFO, loc, "hi"); }\n'
+        '}\n'
+    )
+    result = transform(src, tmp_path)
+    assert 'LoggerFactory.getLogger(FooJob.class)' in result
+    assert 'LoggerFactory.getLogger(for.class)' not in result
+    # The logger field must appear after the real class body opens, not inside the annotation.
+    class_body_pos = result.index('public class FooJob')
+    logger_field_pos = result.index('private static final Logger log')
+    assert logger_field_pos > class_body_pos
+
+
 def test_does_not_double_inject_logger_field(tmp_path):
     src = (
         'import org.slf4j.Logger;\n'

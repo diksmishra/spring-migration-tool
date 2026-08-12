@@ -56,8 +56,16 @@ SLF4J_IMPORTS = (
     'import org.slf4j.LoggerFactory;\n'
 )
 
-# Where to inject the logger field — after class opening brace
-CLASS_OPEN = re.compile(r'((?:public\s+)?(?:abstract\s+)?class\s+(\w+)[^{]*\{)')
+# Where to inject the logger field — after class opening brace.
+# Anchored to the start of a line (mod. only leading whitespace/modifiers) so it
+# can't false-match the word "class" inside a comment, e.g. a Javadoc line like
+# "Message-Driven Bean implementation class for: FooJob" — without the anchor,
+# that matches "class" + "for" as a bogus class name and then swallows everything
+# up to the next unrelated '{' (commonly an annotation's array literal).
+CLASS_OPEN = re.compile(
+    r'^([ \t]*(?:(?:public|private|protected|static|final|abstract)\s+)*class\s+(\w+)[^{]*\{)',
+    re.MULTILINE
+)
 
 
 class LoggingTransformer:
