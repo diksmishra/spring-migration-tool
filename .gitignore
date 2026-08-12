@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+
+# Local-environment-only guidance file, not meant for the shared repo
+CLAUDE.md
