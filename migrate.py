@@ -46,10 +46,14 @@ console = Console()
 @click.option('--java-version',        default=None, help='Java version (default: 17)')
 @click.option('--db-artifacts',      '-d', default=None,
               help='Path to ZIP with .dtdbtable files — generates HDI artifacts (hana-cloud only)')
+@click.option('--unavailable-packages', '-u', default=None,
+              help='Comma-separated import prefixes to comment out with a TODO (e.g. internal utility '
+                   'packages the target environment does not have). Generic SAP APIs are already handled '
+                   'automatically — use this for a specific codebase\'s own proprietary packages.')
 @click.option('--non-interactive', is_flag=True, default=False,
               help='Skip prompts and use defaults / provided options')
 def main(source_dir, output, base_package, group_id, artifact_id, persistence,
-         spring_boot_version, java_version, db_artifacts, non_interactive):
+         spring_boot_version, java_version, db_artifacts, unavailable_packages, non_interactive):
 
     source_path = Path(source_dir).resolve()
 
@@ -156,6 +160,10 @@ def main(source_dir, output, base_package, group_id, artifact_id, persistence,
                 final_db_artifacts = zip_input.strip().strip('"')
 
     # ── Build config ──────────────────────────────────────────────────────────
+    final_unavailable_packages = (
+        [p.strip() for p in unavailable_packages.split(',') if p.strip()] if unavailable_packages else []
+    )
+
     output_path = Path(output).resolve() if output else source_path.parent / f'{final_artifact_id}-springboot'
     config = MigrationConfig(
         source_dir=source_path,
@@ -168,6 +176,7 @@ def main(source_dir, output, base_package, group_id, artifact_id, persistence,
         persistence_mode=final_persistence,
         hdi_service_name=final_hdi_service,
         db_artifacts_zip=final_db_artifacts,
+        unavailable_packages=final_unavailable_packages,
         scan_result=scan_result,
     )
 

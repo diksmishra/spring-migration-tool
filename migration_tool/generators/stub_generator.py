@@ -27,6 +27,19 @@ public interface IUser {
 '''
     ),
     (
+        'com/sap/security/api/IPrincipal.java',
+        '''\
+package com.sap.security.api;
+
+/** Stub — replace with Spring Security principal/authority access. */
+public interface IPrincipal {
+    String getUniqueName();
+    String getDisplayName();
+    String getDescription();
+}
+'''
+    ),
+    (
         'com/sap/security/api/IUserFactory.java',
         '''\
 package com.sap.security.api;

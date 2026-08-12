@@ -22,8 +22,10 @@ def _config(tmp_path):
     )
 
 
-def transform(source, tmp_path):
+def transform(source, tmp_path, unavailable_packages=None):
     cfg = _config(tmp_path)
+    if unavailable_packages:
+        cfg.unavailable_packages = unavailable_packages
     t = ImportTransformer(cfg)
     result, todos = t.transform(source, Path('Foo.java'), {})
     return result, todos
@@ -64,6 +66,20 @@ def test_ejb_with_multiple_attributes_stripped(tmp_path):
     result, _ = transform(src, tmp_path)
     assert '@Autowired' in result
     assert 'name=' not in result.split('@Autowired')[1].split('\n')[0]
+
+
+def test_ejb_on_own_line_keeps_whitespace_before_field(tmp_path):
+    """@EJB on its own line, field on the next, must not glue into '@Autowiredprivate'."""
+    src = (
+        'import javax.ejb.EJB;\n'
+        'public class Foo {\n'
+        '\t@EJB\n'
+        '\tprivate MyBean bean;\n'
+        '}\n'
+    )
+    result, _ = transform(src, tmp_path)
+    assert '@Autowiredprivate' not in result
+    assert '@Autowired\n\tprivate MyBean bean;' in result
 
 
 # ── @Stateless / @Stateful replacement ───────────────────────────────────────
@@ -116,3 +132,82 @@ def test_stateless_import_removed(tmp_path):
     src = 'import javax.ejb.Stateless;\n@Stateless\npublic class Foo {}\n'
     result, _ = transform(src, tmp_path)
     assert 'import javax.ejb.Stateless;' not in result
+
+
+# ── com.sap.bpm.* / com.sap.scheduler.* commented out ────────────────────────
+
+def test_sap_bpm_import_commented_out(tmp_path):
+    src = 'import com.sap.bpm.tm.api.TaskDetail;\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path)
+    assert '// import com.sap.bpm' in result
+    assert '// TODO MANUAL' in result
+    assert any('com.sap.bpm' in t and 'Build Process Automation' in t for t in todos)
+
+
+def test_sap_scheduler_import_commented_out(tmp_path):
+    src = 'import com.sap.scheduler.runtime.mdb.MDBJobImplementation;\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path)
+    assert '// import com.sap.scheduler' in result
+    assert any('com.sap.scheduler' in t for t in todos)
+
+
+def test_javax_resource_cci_import_commented_out(tmp_path):
+    src = 'import javax.resource.cci.Connection;\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path)
+    assert '// import javax.resource.cci' in result
+    assert any('JCA' in t for t in todos)
+
+
+# ── Remaining EJB-container plumbing (after Stateless/Stateful/EJB→Spring) ───
+
+def test_message_driven_import_commented_out(tmp_path):
+    src = 'import javax.ejb.MessageDriven;\n@MessageDriven\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path)
+    assert '// import javax.ejb.MessageDriven' in result
+    assert any('EJB container' in t for t in todos)
+
+
+def test_javax_interceptor_import_commented_out(tmp_path):
+    src = 'import javax.interceptor.Interceptors;\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path)
+    assert '// import javax.interceptor.Interceptors' in result
+
+
+def test_spring_ejb_interceptor_import_commented_out(tmp_path):
+    src = 'import org.springframework.ejb.interceptor.SpringBeanAutowiringInterceptor;\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path)
+    assert '// import org.springframework.ejb.interceptor' in result
+
+
+def test_ejb_conversion_still_works_alongside_container_plumbing_removal(tmp_path):
+    """The Stateless/Stateful/EJB→Spring swap must still fire even though the
+    broader javax.ejb.* comment-out now runs right after it."""
+    src = (
+        'import javax.ejb.EJB;\n'
+        'import javax.ejb.MessageDriven;\n'
+        'public class Foo { @EJB MyBean bean; }\n'
+    )
+    result, _ = transform(src, tmp_path)
+    assert 'import org.springframework.beans.factory.annotation.Autowired;' in result
+    assert '@Autowired' in result
+    assert 'import javax.ejb.EJB;' not in result
+    assert '// import javax.ejb.EJB;' not in result  # must not be double-commented
+    assert '// import javax.ejb.MessageDriven' in result
+
+
+# ── Generic --unavailable-packages mechanism ─────────────────────────────────
+
+def test_unavailable_packages_commented_out_when_supplied(tmp_path):
+    src = 'import com.bbt.cmn.util.services.CommonUtilityBeanLocal;\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path, unavailable_packages=['com.bbt.cmn'])
+    assert '// import com.bbt.cmn.util.services.CommonUtilityBeanLocal;' in result
+    assert '// TODO MANUAL' in result
+    assert any('com.bbt.cmn' in t for t in todos)
+
+
+def test_unavailable_packages_noop_when_not_supplied(tmp_path):
+    """No client-specific behavior by default — the tool stays generic."""
+    src = 'import com.bbt.cmn.util.services.CommonUtilityBeanLocal;\npublic class Foo {}\n'
+    result, todos = transform(src, tmp_path)
+    assert 'import com.bbt.cmn.util.services.CommonUtilityBeanLocal;' in result
+    assert not any('com.bbt' in t for t in todos)

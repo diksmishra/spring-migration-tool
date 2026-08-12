@@ -24,6 +24,7 @@ def _config(tmp_path):
 
 EXPECTED_STUBS = [
     ('com/sap/security/api/IUser.java',           'package com.sap.security.api;',          'interface IUser'),
+    ('com/sap/security/api/IPrincipal.java',      'package com.sap.security.api;',          'interface IPrincipal'),
     ('com/sap/security/api/IUserFactory.java',    'package com.sap.security.api;',          'interface IUserFactory'),
     ('com/sap/security/api/IRoleFactory.java',    'package com.sap.security.api;',          'interface IRoleFactory'),
     ('com/sap/security/api/UMException.java',     'package com.sap.security.api;',          'class UMException'),

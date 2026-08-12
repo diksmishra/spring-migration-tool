@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 @dataclass
@@ -15,6 +15,7 @@ class MigrationConfig:
     persistence_mode: str          # 'jpa' | 'jdbc' | 'sap' | 'hana-cloud'
     hdi_service_name: str = ''     # BTP CF service instance name (hana-cloud mode only)
     db_artifacts_zip: str = ''     # Path to ZIP with .dtdbtable files (hana-cloud mode only)
+    unavailable_packages: List[str] = field(default_factory=list)  # extra import prefixes to flag+comment out
     scan_result: Dict[str, Any] = field(default_factory=dict)
 
     @property
