@@ -1,7 +1,12 @@
 """
 Parser for SAP NWDS ABAP Dictionary (.dtdbtable) files.
 
-Format: XMI/XML wrapping a <dictionary:DBTable> element.
+Format: MetaDataAPI-generated XML. The root element IS the table
+(<DtDbTable name="..." xmlns="http://xml.sap.com/2002/10/metamodel/dictionary">),
+with columns as <DtField> elements under <DtStructure.StructureElements>, and
+primary key columns declared separately under <DtDbTable.PrimaryKey> via
+<Core.Reference path="StructureElement:COL_NAME"/> — key membership is not a
+per-column attribute.
 Supports individual file parsing and bulk extraction from a ZIP archive.
 """
 import zipfile
@@ -9,9 +14,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# XML namespaces used in NWDS DDIC files
-_DICT_NS = 'com.sap.ide.dictionary.model.dictionary'
-_XMI_NS  = 'http://www.omg.org/XMI'
+# Default namespace declared on the <DtDbTable> root in real MetaDataAPI exports
+_NWDS_NS = 'http://xml.sap.com/2002/10/metamodel/dictionary'
+
+
+def _q(tag: str) -> str:
+    return f'{{{_NWDS_NS}}}{tag}'
 
 # NWDS builtInType → HANA Cloud SQL type
 _TYPE_MAP = {
@@ -34,7 +42,7 @@ def _to_hana_type(built_in_type: str, length: str) -> str:
 
 
 def parse_dtdbtable_content(xml_content: str) -> Optional[Dict]:
-    """Parse a single .dtdbtable XMI string into a table definition dict.
+    """Parse a single .dtdbtable XML string into a table definition dict.
 
     Returns:
         {
@@ -52,42 +60,44 @@ def parse_dtdbtable_content(xml_content: str) -> Optional[Dict]:
     except ET.ParseError:
         return None
 
-    # <dictionary:DBTable> — try with and without namespace
-    table_elem = root.find(f'{{{_DICT_NS}}}DBTable')
-    if table_elem is None:
-        table_elem = root.find('DBTable')
-    if table_elem is None:
+    # The root element is the table itself, not a nested child.
+    if root.tag != _q('DtDbTable'):
         return None
 
-    table_name = table_elem.get('name', '').strip()
+    table_name = root.get('name', '').strip()
     if not table_name:
         return None
 
+    # Primary key columns are declared separately, referenced by name —
+    # not a per-column attribute like keyFlag.
+    key_names = set()
+    for ref in root.iter(_q('Core.Reference')):
+        path = ref.get('path', '')
+        if path.startswith('StructureElement:'):
+            key_names.add(path.split(':', 1)[1])
+
     columns: List[Dict] = []
-    for col in table_elem.findall('columns'):
-        col_name = col.get('name', '').strip()
-        if not col_name:
-            continue
+    struct_elements = root.find(_q('DtStructure.StructureElements'))
+    if struct_elements is not None:
+        for field in struct_elements.findall(_q('DtField')):
+            col_name = field.get('name', '').strip()
+            if not col_name:
+                continue
 
-        key_flag    = col.get('keyFlag',     'false').lower() == 'true'
-        not_null    = col.get('notNullFlag', 'false').lower() == 'true'
-        description = col.get('description', '')
-
-        simple = col.find('simpleType')
-        if simple is not None:
-            built_in = simple.get('builtInType', 'string')
-            length   = simple.get('length', '')
+            built_in = field.get('builtInType', 'string')
+            length   = field.get('length', '')
             sql_type = _to_hana_type(built_in, length)
-        else:
-            sql_type = 'NVARCHAR(100)'
 
-        columns.append({
-            'name':        col_name,
-            'sql_type':    sql_type,
-            'key_flag':    key_flag,
-            'not_null':    not_null or key_flag,  # PK columns must be NOT NULL
-            'description': description,
-        })
+            key_flag = col_name in key_names
+            not_null = field.get('notNull', 'false').lower() == 'true'
+
+            columns.append({
+                'name':        col_name,
+                'sql_type':    sql_type,
+                'key_flag':    key_flag,
+                'not_null':    not_null or key_flag,  # PK columns must be NOT NULL
+                'description': '',
+            })
 
     return {'table_name': table_name, 'columns': columns}
 

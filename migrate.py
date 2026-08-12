@@ -33,6 +33,9 @@ console = Console()
 @click.command()
 @click.argument('source_dir', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option('--output',            '-o', default=None, help='Output directory for converted project')
+@click.option('--base-package',      '-b', default=None,
+              help='Base Java package (e.g. com.example.myapp). Overrides auto-detection — '
+                   'required for --non-interactive on sources with more than one top-level package.')
 @click.option('--group-id',          '-g', default=None, help='Maven group ID (e.g. com.example.myapp)')
 @click.option('--artifact-id',       '-a', default=None, help='Maven artifact ID (e.g. my-service)')
 @click.option('--persistence',       '-p',
@@ -45,7 +48,7 @@ console = Console()
               help='Path to ZIP with .dtdbtable files — generates HDI artifacts (hana-cloud only)')
 @click.option('--non-interactive', is_flag=True, default=False,
               help='Skip prompts and use defaults / provided options')
-def main(source_dir, output, group_id, artifact_id, persistence,
+def main(source_dir, output, base_package, group_id, artifact_id, persistence,
          spring_boot_version, java_version, db_artifacts, non_interactive):
 
     source_path = Path(source_dir).resolve()
@@ -92,9 +95,9 @@ def main(source_dir, output, group_id, artifact_id, persistence,
     detected_package = scan_result.get('detected_base_package', '')
 
     if non_interactive:
-        final_group_id        = group_id or (detected_package.rsplit('.', 1)[0] if detected_package else 'com.example')
+        final_package         = base_package or detected_package or 'com.example.app'
+        final_group_id        = group_id or (final_package.rsplit('.', 1)[0] if '.' in final_package else final_package)
         final_artifact_id     = artifact_id or source_path.name.lower().replace(' ', '-').replace('_', '-')
-        final_package         = detected_package or 'com.example.app'
         final_persistence     = persistence or 'jpa'
         final_sb_version      = spring_boot_version or '3.2.5'
         final_java_version    = java_version or '17'
@@ -104,7 +107,7 @@ def main(source_dir, output, group_id, artifact_id, persistence,
         console.print('[bold]Configure your migration:[/bold]')
         console.print()
 
-        default_package  = detected_package or 'com.example.app'
+        default_package  = base_package or detected_package or 'com.example.app'
         final_package    = Prompt.ask('  [cyan][1/5][/cyan] Base package', default=default_package)
 
         default_group    = group_id or (final_package.rsplit('.', 1)[0] if '.' in final_package else final_package)
