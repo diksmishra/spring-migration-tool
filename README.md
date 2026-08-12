@@ -42,13 +42,14 @@ Step 6 — Deploy to BTP CF
 ## What it does
 
 1. **Scans** your legacy project and classifies all Java files — controllers, services, DAOs, models, enums (`co/`), utils, test files, and EJB-style implementations. Files whose package indicates an existing Spring Boot scaffold (not legacy code) are identified and skipped.
-2. **Detects** SAP-specific patterns: `com.sap.tc.logging`, `javax.persistence`, JNDI lookups, SAP JCo, SAP UME Security, SAP NetWeaver platform APIs (`com.sap.engine.*`). Also detects removed/deprecated Java 9–17 APIs (JAXB, `sun.*`, `SecurityManager`, deprecated `Thread` methods, boxed constructors, `finalize()`).
+2. **Detects** SAP-specific and removed-platform-API patterns: `com.sap.tc.logging`, `javax.persistence`, JNDI lookups, SAP JCo, SAP UME Security, SAP NetWeaver platform APIs (`com.sap.engine.*`), SAP BPM workflow APIs (`com.sap.bpm.*`), SAP Job Scheduler/MDB APIs (`com.sap.scheduler.*`), JCA connector APIs (`javax.resource.cci.*`), EJB-container plumbing (`javax.ejb.*`, `javax.interceptor.*`, `org.springframework.ejb.*`), and JAX-WS (`javax.jws.*`). Also detects removed/deprecated Java 9–17 APIs (JAXB, `sun.*`, `SecurityManager`, deprecated `Thread` methods, boxed constructors, `finalize()`).
 3. **Transforms** every `.java` file:
-   - Replaces `SimpleLogger` / `Location` with SLF4J (`Logger` / `LoggerFactory`)
-   - Rewrites `javax.*` → `jakarta.*` (required for Spring Boot 3.x / Jakarta EE 9+)
+   - Replaces `SimpleLogger` / `Location` with SLF4J (`Logger` / `LoggerFactory`) — also removes any pre-existing, now-conflicting `Logger` import (e.g. `java.util.logging.Logger`), since Java can't import two different types with the same simple name
+   - Rewrites `javax.*` → `jakarta.*` (required for Spring Boot 3.x / Jakarta EE 9+) — persistence, transaction, validation, servlet, and annotation (`@PostConstruct`/`@Resource`/etc.) packages
    - Converts EJB annotations: `@Stateless` / `@Stateful` → `@Service`, `@EJB` → `@Autowired`
    - Removes OpenJPA-specific imports
-   - **Comments out** SAP imports that have no classpath equivalent on BTP CF (`com.sap.security.*`, `com.sap.engine.*`, `com.sap.conn.jco.*`) — leaving them as `import` statements causes compile failures; each commented-out line gets a `// TODO MANUAL` marker and a 1:1 entry in `migration-report.md`
+   - **Comments out** imports that have no classpath equivalent on BTP CF/Spring Boot — `com.sap.engine.*`, `com.sap.conn.jco.*`, `com.sap.bpm.*`, `com.sap.scheduler.*`, `javax.resource.cci.*`, leftover `javax.ejb.*`/`javax.interceptor.*`/`org.springframework.ejb.*`, and `javax.jws.*` (`com.sap.security.*` is the one exception — see below). Leaving these as live `import` statements causes compile failures; each commented-out line gets a `// TODO MANUAL` marker and a 1:1 entry in `migration-report.md`. **Note:** this only fixes the import line itself — if the same type is used as a field, parameter, return type, or inside a method body, that usage still needs manual fixing (see [Limitations](#limitations))
+   - **Comments out** any additional import prefixes you supply via `--unavailable-packages` — for a specific codebase's own internal/proprietary packages, without hardcoding any client-specific strings into the tool itself
 4. **Places output files** using each file's own `package` declaration, so flat legacy projects (no `src/main/java/` tree) land in the correct nested directory. Test files (path contains `/test/` or name ends in `Test.java` / `Tests.java` / `IT.java`) are routed to `src/test/java/`.
 5. **Generates** Spring Boot scaffold files (`pom.xml` with Lombok, main class, properties, `manifest.yml`, `mta.yaml`, root `package.json`).
 6. **Generates** HANA Cloud HDI artifacts (`*.hdbtable`, `.hdiconfig`, `.hdinamespace`) from `.dtdbtable` ZIP exports.
@@ -155,12 +156,14 @@ python migrate.py "C:\path\to\legacy-java-project" `
 |---|---|---|---|
 | `SOURCE_DIR` | — | required | Path to the legacy Java project root |
 | `--output` | `-o` | `<parent>/<artifact-id>-springboot` | Output directory |
+| `--base-package` | `-b` | auto-detected | Base Java package. Overrides auto-detection — **required** for `--non-interactive` if the source spans more than one top-level package (see [Q14](#q14-base-package-auto-detected-as-just-com)) |
 | `--group-id` | `-g` | auto-detected | Maven group ID |
 | `--artifact-id` | `-a` | source directory name | Maven artifact ID |
 | `--persistence` | `-p` | `jpa` | `jpa`, `jdbc`, `sap`, or `hana-cloud` |
 | `--spring-boot-version` | — | `3.2.5` | Spring Boot parent version |
 | `--java-version` | — | `17` | Java compile target |
 | `--db-artifacts` | `-d` | _(none)_ | Path to ZIP containing `.dtdbtable` files |
+| `--unavailable-packages` | `-u` | _(none)_ | Comma-separated import prefixes to comment out with a TODO — for a codebase's own internal/proprietary packages the target environment doesn't have (see [Q15](#q15-my-codebase-has-its-own-internal-packages-that-dont-exist-in-the-target-environment)) |
 | `--non-interactive` | — | `false` | Skip all prompts; use provided values |
 
 ---
@@ -174,6 +177,8 @@ python migrate.py "C:\path\to\legacy-java-project" `
 ```
 
 The root Java package for the output project. The tool auto-detects it by scanning import statements; confirm or override. If the detection looks too deep (e.g., `com.example.myapp.controller`), shorten it to the correct root (e.g., `com.example.myapp`).
+
+> In `--non-interactive` mode there's no prompt to catch a bad detection — if your source spans more than one top-level package (e.g. both `com.example.myapp.*` and `com.example.legacy.*`), pass `--base-package` explicitly. See [Q14](#q14-base-package-auto-detected-as-just-com).
 
 ---
 
@@ -346,10 +351,14 @@ Order matters for two of these: `JakartaEE11` must run before `UpgradeSpringBoot
 
 ## Limitations
 
-- **No semantic analysis.** Transformations are regex-based. Unusual formatting of SAP logging calls may not be detected.
-- **SAP UME Security (`com.sap.security.*`).** Import statements are commented out with `// TODO MANUAL` to prevent compile failures. Spring Security wiring (`UserDetailsService`, `SecurityFilterChain`) must be implemented manually.
-- **SAP NetWeaver platform API (`com.sap.engine.*`).** Import statements are commented out. Replace with `@ConfigurationProperties` / `@Value` for configuration, and `@Component` / `@Bean` for singletons.
-- **SAP JCo (`com.sap.conn.jco.*`).** Import statements are commented out. RFC/BAPI calls require manual rewriting — either use the SAP JCo standalone jar (if licensed) or expose SAP via REST.
+- **No semantic analysis.** Transformations are regex-based, not AST-based. Unusual formatting may not be detected, and — see the next point — the tool cannot safely rewrite a *usage* of a type, only the self-contained `import` line that brings it in.
+- **Commenting an import doesn't fix usages elsewhere in the file.** This applies to every "comments out" category below (`com.sap.engine.*`, `com.sap.conn.jco.*`, `com.sap.bpm.*`, `com.sap.scheduler.*`, `javax.resource.cci.*`, `javax.ejb.*`/`javax.interceptor.*`/`org.springframework.ejb.*`, `javax.jws.*`, and anything passed via `--unavailable-packages`): if the type is also used as a field, a method parameter/return type, an annotation argument, or inside a method body, that usage still fails to compile as `cannot find symbol` — see [Q10](#q10-mvn-compile-still-fails-with-cannot-find-symbol-on-sapejbbpm-classes). Safely rewriting a usage (as opposed to a self-contained import line) needs real Java structural understanding — you can't blank out a method's return type without removing the whole method, and removing a method can break its callers elsewhere. That's out of scope for a regex-based tool.
+- **SAP UME Security (`com.sap.security.*`) is the one exception** — imports stay live, and `StubGenerator` writes ten compilable stub classes/interfaces (`IUser`, `IPrincipal`, `IUserFactory`, `IRoleFactory`, `IGroup`, `IGroupFactory`, `IAuthenticator`, `UMException`, `UMFactory`, `ApplicationPropertiesChangeListener`) covering the most common `UMFactory.*` calls, throwing `UnsupportedOperationException` at runtime. This is best-effort, not exhaustive — an unusual UME class or `UMFactory` method not in that list will still fail as `cannot find symbol`.
+- **SAP BPM (`com.sap.bpm.*`).** Being replaced by Build Process Automation (BPA) on BTP — there's no mechanical equivalent to migrate to yet. Imports are commented out; usages need a full rewrite once the BPA replacement is designed.
+- **SAP Job Scheduler / MDB (`com.sap.scheduler.*`, `@MessageDriven`).** No Spring Boot equivalent — Spring Boot doesn't run inside an EJB container. Rewrite as a Spring `@Scheduled` task or `@JmsListener` depending on what triggered the original job.
+- **JCA Connector Architecture (`javax.resource.cci.*`).** SAP RFC/BAPI-style resource adapter with no Spring Boot equivalent. Replace with the SAP JCo standalone jar (if licensed) or expose SAP via REST.
+- **Missing third-party dependencies (e.g. Apache POI, `commonj.sdo`).** The tool only handles SAP-proprietary and removed-JDK packages — a genuinely missing but ordinary Maven dependency (like `org.apache.poi`) isn't auto-added, since guessing a version without knowing the project's constraints is riskier than just adding it yourself. `commonj.sdo` in particular is usually bundled with the app server/BPM runtime itself rather than a normal reusable artifact — that one likely needs rewriting away entirely, not a dependency add.
+- **Internal/proprietary packages specific to one codebase** (a client's own utility packages, say) aren't hardcoded into the tool — pass them via `--unavailable-packages` per run instead. See [Q15](#q15-my-codebase-has-its-own-internal-packages-that-dont-exist-in-the-target-environment).
 - **Java 9–17 deprecated APIs.** The tool _detects_ JAXB, `sun.*`, `SecurityManager`, boxed constructors, `finalize()`, and deprecated `Thread` methods, and records them in the migration report, but does **not** modify the source. Each item must be fixed manually.
 - **No DB schema generation from Java.** Model/entity classes are transformed (javax→jakarta) but field definitions are not synthesised from source — you need the DB schema or `.dtdbtable` files.
 - **JNDI DataSource.** `InitialContext` / `context.lookup` usages are flagged but not replaced. Wire Spring Boot datasource injection (`@Autowired DataSource`) manually.
@@ -498,7 +507,7 @@ Get the deployment ID from the `cf deploy` output, or run `cf mta-ops`.
 
 ---
 
-### Q10: `mvn compile` still fails with `cannot find symbol` on SAP classes
+### Q10: `mvn compile` still fails with `cannot find symbol` on SAP/EJB/BPM classes
 
 **Symptom:** Even after migration, `mvn compile` reports errors like:
 ```
@@ -506,10 +515,15 @@ error: cannot find symbol
   symbol:   class IUser
   location: class ...ServiceImpl
 ```
+or the same shape for BPM (`TaskDetail`, `Status`), scheduler/MDB (`MDBJobImplementation`, `JobContext`), EJB-container (`Local`, `TransactionManagementType`), or JAX-WS (`WebMethod`, `WebParam`) types.
 
-**Cause:** The SAP class is referenced in method signatures, field declarations, or method bodies — not just in the `import` statement. The tool only comments out `import` lines; usages in code remain.
+**Cause:** The type is referenced in method signatures, field declarations, annotation arguments, or method bodies — not just in the `import` statement. The tool only comments out `import` lines (or, for `com.sap.security.api.*`, generates a stub); usages in code remain untouched either way. See [Limitations](#limitations) for why this can't be done safely by a regex-based tool.
 
-**Fix:** Search for all uses of the missing class name in the file and either remove them or replace them with the Spring equivalent. For `com.sap.security.api.IUser`, a common replacement is to inject `java.security.Principal` via a method parameter annotated with `@AuthenticationPrincipal`.
+**Fix:** Search for all uses of the missing type name in the file and either remove them or replace them with the Spring equivalent:
+- `com.sap.security.api.IUser` → inject `java.security.Principal` via a method parameter annotated with `@AuthenticationPrincipal`, or extend the stub set in `stub_generator.py` if the call is to a `UMFactory` method not yet stubbed.
+- `com.sap.bpm.*` types → no mechanical equivalent yet; rewrite against BTP Build Process Automation once that's designed.
+- MDB/scheduler types (`MDBJobImplementation`, `JobContext`, `@MessageDriven`) → rewrite the class as a Spring `@Scheduled` task or `@JmsListener`.
+- JCA types (`javax.resource.cci.*`) → rewrite using the SAP JCo standalone jar or a REST call to SAP.
 
 ---
 
@@ -565,3 +579,31 @@ MANUAL — Java version upgrade: Boxed-type constructors (new Integer(), ...) ar
 | `protected void finalize()` | `AutoCloseable` + try-with-resources |
 
 These are compile warnings in Java 17 and compile errors in Java 21+. Fix them before upgrading the Java version target in `pom.xml`.
+
+---
+
+### Q14: Base package auto-detected as just `com`
+
+**Symptom:** In `--non-interactive` mode, the generated `Application.java` ends up at `src/main/java/com/FooApplication.java` with `package com;` — and possibly a *second*, stray `@SpringBootApplication` class if you'd already generated once before without noticing.
+
+**Cause:** Base package auto-detection works by taking the longest common package-segment prefix across every scanned file. If the source spans more than one top-level package (e.g. it mixes `com.example.myapp.*` and `com.example.legacy.*`), the common prefix collapses to just `com`, since the two diverge immediately after that. Interactive mode catches this at the `[1/5]` prompt (you'd notice and correct a `com` default); non-interactive mode has no such checkpoint.
+
+**Fix:** Pass `--base-package` explicitly:
+```powershell
+python migrate.py "C:\path\to\legacy-java-project" --base-package "com.example.myapp" --non-interactive ...
+```
+If a stray `com/FooApplication.java` was already generated by a previous run, delete it manually — the tool doesn't clean up files from prior runs, it only (re)writes what the current run produces.
+
+---
+
+### Q15: My codebase has its own internal packages that don't exist in the target environment
+
+**Symptom:** `mvn compile` fails with `package does not exist` for packages that aren't SAP's own (e.g. an internal shared-utilities package specific to your organization), and the tool doesn't flag them by default.
+
+**Cause:** This tool stays generic on purpose — it never hardcodes any specific organization's or project's package names (see [CLAUDE.md](CLAUDE.md)'s "No client-specific strings" rule). Only genuinely SAP-proprietary and removed-JDK packages are recognized automatically.
+
+**Fix:** Pass `--unavailable-packages` with a comma-separated list of prefixes:
+```powershell
+python migrate.py "C:\path\to\legacy-java-project" --unavailable-packages "com.example.myapp.internal,com.example.sharedutils" --non-interactive ...
+```
+Each matching import gets commented out with a `// TODO MANUAL` marker, same as the built-in SAP categories. As always, this only fixes the import line — usages elsewhere in the file still need manual attention (see [Q10](#q10-mvn-compile-still-fails-with-cannot-find-symbol-on-sapejbbpm-classes)).
